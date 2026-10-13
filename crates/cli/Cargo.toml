@@ -1,0 +1,12 @@
+[package]
+name = "hsp-cli"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+hsp-core = { path = "../core" }
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true

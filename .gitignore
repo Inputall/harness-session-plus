@@ -1,0 +1,12 @@
+/target/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+*.local.json
+
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+.env
+.env.*
+!.env.example

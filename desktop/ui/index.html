@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Harness Session Plus</title><link rel="stylesheet" href="styles.css"><script defer src="app.js"></script></head>
+<body>
+<svg class="svg-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="m10 13 4-4M8 16l-2 2a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0m2 1 2-2a4 4 0 0 1 6 6l-5 5a4 4 0 0 1-6 0" transform="translate(1 0)"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 4-5 8-8 9-3-1-8-5-8-9V6zM8 12l3 3 5-6"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 10a8 8 0 1 0-2 8M20 3v7h-7"/></symbol>
+<symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 6 6 6-6 6m9 0h7"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+<symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z"/></symbol>
+<symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v9M6 6a8 8 0 1 0 12 0"/></symbol>
+<symbol id="i-external" viewBox="0 0 24 24"><path d="M14 3h7v7m0-7L10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/></symbol>
+</defs></svg>
+<div class="shell">
+<aside class="sidebar">
+  <div class="brand"><div class="brand-mark">H<span>+</span></div><div><strong>Harness Plus</strong><small>SESSION MANAGER</small></div></div>
+  <div class="nav-caption">管理中心</div>
+  <nav aria-label="主导航">
+    <button class="nav-item active" data-page="overview" aria-current="page"><svg><use href="#i-grid"/></svg>概览</button>
+    <button class="nav-item" data-page="trash"><svg><use href="#i-trash"/></svg>会话回收站<span class="nav-tag">可恢复</span></button>
+    <button class="nav-item" data-page="connection"><svg><use href="#i-link"/></svg>连接与增强</button>
+    <button class="nav-item" data-page="capabilities"><svg><use href="#i-shield"/></svg>能力探测</button>
+    <button class="nav-item" data-page="settings"><svg><use href="#i-settings"/></svg>设置</button>
+  </nav>
+  <div class="sidebar-bottom"><div class="local-badge"><span class="dot"></span>本机运行 · 独立管理</div><div class="version">Harness Session Plus <span>v0.2.2</span></div></div>
+</aside>
+<main>
+  <header class="topbar"><div class="breadcrumb">管理中心 <span>/</span> <strong id="crumb">概览</strong></div><div class="top-actions"><span class="status-pill" id="global-status"><span class="dot"></span>尚未检查</span><button class="icon-button" id="theme-toggle" title="切换明暗主题" aria-label="切换明暗主题"><svg><use href="#i-moon"/></svg></button></div></header>
+  <div class="main-scroll">
+  <section class="page" id="page-overview">
+    <article class="recommendation" aria-labelledby="recommendation-title">
+      <div class="recommendation-mark" aria-hidden="true">C<span>API</span></div>
+      <div class="recommendation-copy"><span class="recommendation-label">推荐内容</span><h2 id="recommendation-title">CoderPlant · 码源</h2><p>AI API Gateway，为开发与团队协作提供 API 服务入口。模型、图像能力、价格与套餐信息以官网当前说明为准。</p><small>第三方服务 · coderplant.com</small></div>
+      <div class="recommendation-actions"><div class="recommendation-tags" aria-label="网站内容"><span>API 服务</span><span>模型接入</span><span>开发协作</span><span>查看套餐</span></div><button type="button" class="button primary" id="open-recommendation" aria-label="在默认浏览器打开 CoderPlant 官网"><svg><use href="#i-external"/></svg>打开推荐内容</button></div>
+    </article>
+    <div class="page-heading"><div><div class="eyebrow">WORKSPACE CONTROL</div><h1>你的会话管理中心</h1><p>连接 Harness，管理页面增强，查看可用能力。</p></div><button class="button primary" data-action="diagnose"><svg><use href="#i-refresh"/></svg>检查连接</button></div>
+    <div class="hero"><div><span class="hero-label"><span class="dot"></span>仅连接本机 Harness</span><h2>让会话管理，<br>更轻松一点。</h2><p>页面增强与管理窗口独立运行。<br>你的会话内容留在本机。</p><button class="button primary" data-nav="connection">连接与增强<svg><use href="#i-arrow"/></svg></button></div><div class="hero-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="art-card art-back"><div></div><div></div><div></div></div><div class="art-card art-front"><div class="art-icon"><svg><use href="#i-shield"/></svg></div><div class="art-line"></div><div class="art-line short"></div><div class="art-check"><svg><use href="#i-check"/></svg>LOCAL FIRST</div></div><span class="art-spark spark-one">+</span><span class="art-spark spark-two">+</span></div></div>
+    <div class="metrics"><article class="metric"><div class="metric-label">连接状态<svg><use href="#i-link"/></svg></div><strong id="metric-connection">尚未检查</strong><small id="metric-address">127.0.0.1:9223</small></article><article class="metric"><div class="metric-label">页面增强<svg><use href="#i-grid"/></svg></div><strong id="metric-injection">尚未检查</strong><small id="metric-buttons">测试按钮状态待检查</small></article><article class="metric"><div class="metric-label">回收站能力<svg><use href="#i-shield"/></svg></div><strong id="metric-recycle">待连接核实</strong><small>原生归档与恢复 · 永久删除禁用</small></article></div>
+    <div class="two-columns"><article class="panel"><div class="panel-heading"><h3>快捷操作</h3><span class="subtle">页面增强</span></div><button class="action-row" data-nav="trash"><span class="action-icon"><svg><use href="#i-grid"/></svg></span><span><strong>安装回收站增强</strong><small>在会话菜单加入移入回收站按钮</small></span><svg><use href="#i-arrow"/></svg></button><button class="action-row" data-action="remove_injection"><span class="action-icon neutral"><svg><use href="#i-power"/></svg></span><span><strong>卸载页面增强</strong><small>移除本工具的按钮与监听器</small></span><svg><use href="#i-arrow"/></svg></button></article><article class="panel"><div class="panel-heading"><h3>最近活动</h3><span class="subtle">本次运行</span></div><div id="activity" class="activity"><div class="activity-empty">操作结果会显示在这里</div></div></article></div>
+  </section>
+  <section class="page" id="page-trash" hidden>
+    <div class="page-heading"><div><div class="eyebrow">SESSION RECOVERY</div><h1>会话回收站</h1><p>仅收录由本工具移入的会话，按当前 Harness profile 隔离。</p></div><button class="button" id="refresh-trash">刷新回收站</button></div>
+    <div class="notice"><svg><use href="#i-shield"/></svg><div><strong id="recycle-status">安装回收站增强后使用</strong><p>通过原生归档保留数据和工作区位置，原生接口会拒绝仍有活动的会话。恢复后会核对结果。</p></div><button class="button primary" id="install-recycle">安装回收站增强</button></div>
+    <article class="panel recycle-panel"><div class="recycle-toolbar"><input id="trash-search" aria-label="搜索回收站" placeholder="搜索会话标题或工作区"><button id="restore-selected" class="button" disabled>恢复所选</button><button id="check-delete" class="button" disabled>检查删除能力</button><button class="button danger" disabled title="当前 Harness 缺少已验证的会话删除接口">永久删除</button></div><div class="notice"><div><strong>当前版本无法安全永久删除</strong><p>原生接口支持归档与恢复，没有会话永久删除接口。删除能力检查只读取状态，不修改会话或文件。</p></div></div><div id="delete-report" class="notice" hidden></div><div id="trash-error" class="notice" hidden></div><div id="trash-list" class="trash-list"><div class="empty-state"><h2>尚未加载回收站</h2><p>安装增强或刷新后，显示当前 profile 下的工具记录。</p></div></div></article>
+  </section>
+  <section class="page" id="page-connection" hidden>
+    <div class="page-heading"><div><div class="eyebrow">CONNECTION & ENHANCEMENT</div><h1>连接与增强</h1><p>通过本机调试端口连接，不修改 Harness 安装包。</p></div><button class="button" id="disconnect">停止状态检查</button></div>
+    <article class="panel"><div class="panel-heading"><h3>Harness 连接</h3><span class="badge">LOOPBACK ONLY</span></div><div class="connection-body"><div class="connection-visual"><svg><use href="#i-link"/></svg></div><div class="connection-details"><h2 id="connection-title">尚未检查连接</h2><p id="connection-description">点击检查连接，确认当前 Harness 页面。</p><div class="connection-meta"><span>地址 <code id="connection-address">127.0.0.1:9223</code></span><span>浏览器 <code id="browser-version">—</code></span></div></div><button class="button primary" data-action="diagnose">检查连接</button></div><div class="panel-footer"><label class="checkbox-label"><input type="checkbox" id="auto-check">每 15 秒检查连接状态</label><span class="subtle">仅检查；不会自动重放注入或数据操作</span></div></article>
+    <article class="panel spacing"><div class="panel-heading"><h3>会话菜单增强</h3><span id="injection-badge" class="badge">尚未检查</span></div><div class="enhancement"><div><h3>移入回收站 / 恢复</h3><p>在回收站页面安装增强。菜单按钮会先确认对应会话，再由管理工具执行原生归档。</p><small id="injection-detail">尚未检查按钮状态。</small></div><div class="button-group"><button class="button primary" data-nav="trash">打开回收站</button><button class="button" data-action="remove_injection">卸载</button></div></div></article>
+    <article class="panel spacing"><div class="panel-heading"><h3>启动 Harness</h3><span class="subtle">用户主动启动</span></div><div class="enhancement"><div><p>使用设置中的可执行文件路径，附加本机调试参数。</p><small>若 Harness 已运行，先保存工作并正常退出；重复启动可能不会使调试参数生效。</small></div><button class="button" id="launch-harness">启动 Harness</button></div></article>
+    <article class="panel spacing"><div class="panel-heading"><h3>最近诊断结果</h3><span class="subtle">不含聊天正文</span></div><pre class="json-output" id="diagnostic-output">尚未执行诊断。</pre></article>
+  </section>
+  <section class="page" id="page-capabilities" hidden>
+    <div class="page-heading"><div><div class="eyebrow">CAPABILITY DISCOVERY</div><h1>能力探测</h1><p>从只读证据开始，确认当前版本能安全支持的操作。</p></div><button class="button primary" data-action="probe_capabilities"><svg><use href="#i-shield"/></svg>运行只读探测</button></div>
+    <article class="panel"><div class="panel-heading"><h3>能力验证清单</h3><span class="badge warning">本机版本适配</span></div><div class="capability-list"><div><span><strong>真实会话身份</strong><small>准确区分同名会话，核对菜单与 ID</small></span><span class="badge">安装时核实</span></div><div><span><strong>持久实例身份</strong><small>确认 profile，避免跨实例关联记录</small></span><span class="badge">安装时核实</span></div><div><span><strong>可靠运行状态</strong><small>运行中及状态未知时拒绝变更</small></span><span class="badge">安装时核实</span></div><div><span><strong>原生归档 / 恢复</strong><small>当前安装版本专用会话闭环已通过；使用前仍核实实例</small></span><span class="badge">安装时核实</span></div><div><span><strong>永久删除</strong><small>本版本不提供删除实现</small></span><span class="badge">未实现</span></div></div></article>
+    <article class="panel spacing"><div class="panel-heading"><h3>只读探测报告</h3><button class="button small" id="export-report" disabled>保存报告</button></div><div class="report-summary" id="report-summary">采集页面角色、菜单属性名称和脚本数量；不读取正文、认证信息或本地存储。</div><pre class="json-output" id="probe-output">尚未运行探测。</pre></article>
+  </section>
+  <section class="page" id="page-settings" hidden>
+    <div class="page-heading"><div><div class="eyebrow">PREFERENCES</div><h1>设置</h1><p>配置保存在本工具的应用目录中。</p></div></div>
+    <form id="settings-form"><article class="panel"><div class="panel-heading"><h3>连接配置</h3><span class="subtle">仅本机</span></div><div class="form-body"><label class="field"><span>CDP 调试端口</span><input id="port" type="number" min="1" max="65535" required><small>默认 9223。保存后刷新页面列表。</small></label><div class="field"><label for="target">目标页面</label><div class="input-row"><select id="target"><option value="">仅有一个匹配页面时自动选择</option></select><button type="button" class="button" id="refresh-targets">刷新列表</button></div><small>存在多个匹配页面时，必须明确选择；不默认连接首个。</small></div><label class="field"><span>Harness 可执行文件</span><input id="executable" placeholder="C:\…\DeepSeek Harness.exe"><small>只在点击“启动 Harness”时使用；不自动重启或终止进程。</small></label></div></article><article class="panel spacing"><div class="panel-heading"><h3>外观与窗口</h3></div><div class="form-body"><label class="field"><span>界面主题</span><select id="theme"><option value="dark">深色 · 蓝黑</option><option value="light">浅色 · 冷白</option></select></label><p class="settings-note">关闭窗口后保留在系统托盘。退出工具会尝试卸载本工具安装的测试增强，Harness 保持运行。</p></div></article><div class="form-actions"><span class="subtle">不会启用开机启动、遥测或后台清理</span><button class="button primary" type="submit">保存设置</button></div></form>
+    <button class="button spacing" id="quit"><svg><use href="#i-power"/></svg>退出工具</button>
+  </section>
+  <footer class="footer"><span>本地管理，独立运行</span><span>原生归档与恢复 · 永久删除未启用</span></footer>
+  </div>
+</main></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<dialog id="cleanup-dialog"><h2>注入卸载未确认</h2><p id="cleanup-message"></p><div class="button-group"><button class="button" id="stay">留在工具</button><button class="button danger" id="force-quit">直接退出</button></div></dialog>
+</body></html>
