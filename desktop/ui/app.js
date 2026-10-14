@@ -5,7 +5,7 @@ const invoke = (command, args = {}) => {
   return window.__TAURI__.core.invoke(command, args);
 };
 const state = {settings:null, busy:false, connected:false, installed:null, autoTimer:null, failures:0, toastTimer:null, records:[], selected:new Set()};
-const titles = {overview:"概览",trash:"会话回收站",connection:"连接与增强",capabilities:"能力探测",settings:"设置"};
+const titles = {overview:"概览",trash:"会话回收站",connection:"连接与增强",capabilities:"能力探测",skins:"皮肤中心",settings:"设置"};
 const actionNames = {diagnose:"连接检查",inject_test:"测试注入",remove_injection:"卸载增强",probe_capabilities:"只读能力探测"};
 function navigate(page) {
   for (const section of document.querySelectorAll(".page")) section.hidden = section.id !== `page-${page}`;
@@ -15,7 +15,102 @@ function navigate(page) {
     if (active) button.setAttribute("aria-current","page"); else button.removeAttribute("aria-current");
   }
   $("crumb").textContent = titles[page];
+  if(page==='skins')loadSkins();
 }
+const skinState={catalog:[],selected:null,loading:false,running:false,page:0,communityOffset:0,communityTotal:0,communityItems:[],communityLoading:false};
+// Keep upstream identifiers and attribution files intact; use neutral UI labels.
+const themeText=value=>String(value??'').replace(/codex(?:\+\+)?[\s-]*/gi,'').trim();
+const themeDisplay=theme=>({...theme,name:themeText(theme.name)||'未命名主题',description:themeText(theme.description),author:themeText(theme.author),authorDisplayName:themeText(theme.authorDisplayName),license:themeText(theme.license),conversionReason:themeText(theme.conversionReason),tags:(theme.tags||[]).map(themeText)});
+async function loadSkins(){
+  if(skinState.loading||skinState.catalog.length)return;skinState.loading=true;
+  try{
+    const catalog=await invoke('theme_library');skinState.catalog=catalog.map(themeDisplay);renderSkins();
+  }catch(e){$("skin-feedback").textContent=e.message||'无法加载皮肤，请重新打开页面。';}finally{skinState.loading=false;}
+}
+function renderSkins(){
+    const query=$("skin-search").value.trim().toLowerCase();
+    const category=$("skin-filter").value;
+    const catalog=skinState.catalog.filter(s=>(!category||category==='all'||s.category===category||(category==='imported'&&s.id.startsWith('imported-')))&&`${s.name} ${s.author||''} ${s.description||''} ${(s.tags||[]).join(' ')}`.toLowerCase().includes(query));
+    const pages=Math.max(1,Math.ceil(catalog.length/12));skinState.page=Math.min(skinState.page,pages-1);
+    $("skin-count").textContent=`本地 ${catalog.length} 款 · 第 ${skinState.page+1} / ${pages} 页`;
+    $("skin-prev").disabled=skinState.page===0;$("skin-next").disabled=skinState.page>=pages-1;
+    $("skin-catalog").replaceChildren();
+    for(const skin of catalog.slice(skinState.page*12,skinState.page*12+12)){
+      const card=document.createElement('button');card.type='button';card.className='skin-card';card.setAttribute('aria-pressed',String(skinState.selected===skin.id));
+      for(const key of ['bg','surface','hover','text','muted','accent','border'])card.style?.setProperty(`--skin-${key}`,skin[key]);
+      const preview=document.createElement('div');preview.className='skin-preview';const side=document.createElement('div');side.className='skin-preview-side';side.textContent='H+';
+      const content=document.createElement('div');content.className='skin-preview-content';const label=document.createElement('strong');label.textContent='你的工作区';const line=document.createElement('span');line.textContent='让专注更舒服';const bubble=document.createElement('div');bubble.className='skin-preview-bubble';bubble.textContent='开始新的思考';content.append(label,line,bubble);preview.append(side,content);
+      const name=document.createElement('strong');name.textContent=skin.name;const description=document.createElement('small');description.textContent=skin.description;card.append(preview,name,description);
+      if(skin.preview||skin.wallpaper){const img=document.createElement('img');img.className='skin-wallpaper-preview';img.loading='lazy';img.src=skin.preview||skin.wallpaper;img.alt=`${skin.name} 壁纸预览`;card.prepend(img);}
+      if(skin.converted){const credit=document.createElement('small');credit.textContent=`作者：${skin.author||'未提供'} · ${skin.license||'未提供许可'} · 转换主题`;card.append(credit);}
+      card.addEventListener('click',()=>{if(state.busy)return;skinState.selected=skin.id;for(const sibling of $("skin-catalog").children)sibling.setAttribute('aria-pressed',String(sibling===card));$("skin-selection").textContent=skin.name;$("skin-description").textContent=skin.description;$("skin-source-info").textContent=skin.source?'作者、素材来源与原许可详见随附主题文件。':'';$("skin-apply").disabled=false;});
+      $("skin-catalog").append(card);
+    }
+}
+$("skin-search").addEventListener('input',()=>{skinState.page=0;renderSkins();});
+$("skin-filter").addEventListener('change',()=>{skinState.page=0;renderSkins();});
+$("skin-prev").addEventListener('click',()=>{if(skinState.page>0){skinState.page--;renderSkins();}});
+$("skin-next").addEventListener('click',()=>{skinState.page++;renderSkins();});
+async function loadCommunity(offset=0){
+  if(skinState.communityLoading)return;skinState.communityLoading=true;$("community-refresh").disabled=true;$("community-prev").disabled=true;$("community-next").disabled=true;
+  $("community-info").textContent='正在从 DreamSkin 社区加载…';
+  try{
+    const result=await invoke('community_page',{offset});result.items=result.items.map(themeDisplay);skinState.communityOffset=offset;skinState.communityTotal=result.total;skinState.communityItems=result.items;
+    $("community-list").replaceChildren();
+    for(const item of result.items){
+      const card=document.createElement('article');card.className='panel community-card';const name=document.createElement('strong');name.textContent=item.name;
+      const credit=document.createElement('small');credit.textContent=`${item.authorDisplayName||'未知作者'} · ${item.license||'许可未提供'}`;
+      const note=document.createElement('p');note.textContent=item.conversionReason||'安装时核验主题包和素材摘要，仅转换配色与壁纸。';
+      const button=document.createElement('button');button.className='button';button.textContent='安装到我的主题';button.disabled=!!item.conversionReason;
+      button.addEventListener('click',()=>installCommunity(item,button));card.append(name,credit,note,button);$("community-list").append(card);
+    }
+    $("community-info").textContent=`社区共 ${result.total} 个条目 · 当前 ${offset+1}–${offset+result.items.length} · 安装后在本地主题中应用`;
+  }catch(e){$("community-info").textContent=e.message||'社区加载失败，本地主题仍可使用。';}
+  finally{skinState.communityLoading=false;$("community-refresh").disabled=false;$("community-prev").disabled=skinState.communityOffset===0;$("community-next").disabled=skinState.communityOffset+skinState.communityItems.length>=skinState.communityTotal;}
+}
+async function installCommunity(item,button){
+  if(state.busy)return;
+  if(!window.confirm(`安装“${item.name}”？\n作者：${item.authorDisplayName||'未知'}\n许可：${item.license||'未提供'}\n请确认素材许可适合你的用途。安装只保存到本机，不会自动应用。`))return;
+  busy(true);button.disabled=true;
+  try{await invoke('community_install',{versionId:item.id});skinState.catalog=[];skinState.page=0;$("skin-filter").value='all';$("skin-search").value='';await loadSkins();button.textContent='已安装';toast('已安装到本地主题，选择卡片后应用。');}
+  catch(e){toast(e.message||'主题无法转换，请查看许可或格式。',true);button.disabled=false;}
+  finally{busy(false);}
+}
+$("community-refresh").addEventListener('click',()=>loadCommunity(0));
+$("community-prev").addEventListener('click',()=>loadCommunity(Math.max(0,skinState.communityOffset-48)));
+$("community-next").addEventListener('click',()=>loadCommunity(skinState.communityOffset+48));
+async function skinAction(action){
+  if(state.busy||skinState.running||(action==='apply'&&!skinState.selected))return;
+  skinState.running=true;busy(true);
+  for(const id of ['skin-apply','skin-reset','skin-status'])$(id).disabled=true;
+  try{
+    const result=await invoke('skin_action',{action,skinId:action==='apply'?skinState.selected:null,wallpaperClarity:Number($("skin-clarity").value)});
+    const selected=skinState.catalog.find(s=>s.id===result.active);
+    $("skin-current").textContent=result.installed?(selected?.name||themeText(result.active)||'已应用主题'):'Harness 默认';
+    $("skin-feedback").textContent=action==='reset'?'已停止主题自动恢复，并移除配色和壁纸覆盖。':action==='apply'?`已应用到 Harness${result.wallpaper?'，含壁纸':''}。主题已保存，后台主题守护将自动恢复；关闭工具仍保留。${selected?.converted?' 主题仅应用配色和壁纸。':''}`:result.supported?'当前页面具备已识别的主题变量。':'当前页面缺少主题变量，不能应用皮肤。';
+    if(action!=='status'){log(action==='apply'?`已应用 Harness 皮肤：${selected?.name||result.active}`:'Harness 皮肤已恢复默认');toast($("skin-feedback").textContent);}
+  }catch(e){$("skin-current").textContent='状态未确认';$("skin-feedback").textContent=e.message||'请检查 Harness 连接后重试。';toast($("skin-feedback").textContent,true);if(e.target_ids?.length){fillTargets(e.target_ids.map(id=>({id})));navigate('settings');}}
+  finally{skinState.running=false;busy(false);$("skin-apply").disabled=!skinState.selected;$("skin-reset").disabled=false;$("skin-status").disabled=false;}
+}
+$("skin-apply").addEventListener('click',()=>skinAction('apply'));
+$("skin-reset").addEventListener('click',()=>skinAction('reset'));
+$("skin-status").addEventListener('click',()=>skinAction('status'));
+$("skin-clarity").addEventListener('input',()=>{$("skin-clarity-value").textContent=`${$("skin-clarity").value}%`;});
+$("theme-import-form").addEventListener('submit',async event=>{
+  event.preventDefault();if(state.busy)return;
+  const file=$("theme-config-file").files?.[0],image=$("theme-image-file").files?.[0];
+  if(!file||file.size>65536){toast('请选择不超过 64 KiB 的 theme.json。',true);return;}
+  if(image&&image.size>5*1024*1024){toast('壁纸不能超过 5 MiB。',true);return;}
+  busy(true);$("theme-import-button").disabled=true;
+  try{
+    let imageBase64=null;
+    if(image){const data=new Uint8Array(await image.arrayBuffer());const parts=[];for(let i=0;i<data.length;i+=8192)parts.push(String.fromCharCode(...data.subarray(i,i+8192)));imageBase64=btoa(parts.join(''));}
+    const imported=await invoke('import_theme',{config:await file.text(),imageBase64,author:$("theme-author").value.trim(),license:$("theme-license").value.trim()});
+    skinState.catalog=[];skinState.selected=null;skinState.page=0;$("skin-filter").value='all';$("skin-search").value='';await loadSkins();$("skin-apply").disabled=true;$("skin-selection").textContent='请选择皮肤';
+    $("skin-feedback").textContent=`已导入 ${themeText(imported.name)}。请点击卡片预览，再应用到 Harness。只转换配色和图片。`;
+    toast('主题已保存到本机，尚未应用。');
+  }catch(e){toast(e.message||'导入失败，请检查配置和图片。',true);}finally{busy(false);$("theme-import-button").disabled=false;}
+});
 const recordStates={archived:'已移入回收站',pending_archive:'正在归档',pending_restore:'正在恢复',unknown:'结果未确认',restored:'已恢复',failed:'操作未生效',missing:'原生会话不存在'};
 function renderTrash(records){
   state.records=records;state.selected.clear();$("restore-selected").disabled=true;$("check-delete").disabled=true;$("delete-report").hidden=true;

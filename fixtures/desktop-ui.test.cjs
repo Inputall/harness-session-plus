@@ -18,7 +18,7 @@ function environment(responder) {
   }
   const elements = Object.fromEntries([...html.matchAll(/\bid="([^"]+)"/g)].map(match=>[match[1],new Element(match[1])]));
   const pages=Object.values(elements).filter(e=>e.id.startsWith('page-'));
-  const nav = ['overview','trash','connection','capabilities','settings'].map(page=>{const el=new Element();el.dataset.page=page;return el;});
+  const nav = ['overview','trash','connection','capabilities','skins','settings'].map(page=>{const el=new Element();el.dataset.page=page;return el;});
   const actions=['diagnose','inject_test','remove_injection','probe_capabilities'].map(action=>{const el=new Element();el.dataset.action=action;return el;});
   const navShortcuts=['connection','capabilities'].map(page=>{const el=new Element();el.dataset.nav=page;return el;});
   const calls=[];const intervals=new Map();let nextTimer=1;
@@ -31,6 +31,57 @@ function environment(responder) {
   return {elements,nav,actions,calls,intervals,context,listeners,fire:async(id,event='click')=>{await elements[id].events[event]({preventDefault(){}});},settle:()=>new Promise(resolve=>setImmediate(resolve))};
 }
 const diagnostic={browser:'Mock/1',injection:{installed:false,dataOperations:false},pageRecognized:true};
+test('theme UI uses neutral labels without changing stored theme identity',async()=>{
+ assert(!/codex/i.test(html));
+ const skin={id:'codex-snow-skin',name:'Codex Snow Skin',description:'由 Codex++ 转换的明亮主题',author:'Author / Codex contributors',license:'MIT',source:'https://github.com/example/Codex-Skin',converted:true};
+ const env=environment(command=>command==='theme_library'?[skin]:{installed:true,active:skin.id,wallpaper:true});
+ await env.settle();env.nav.find(n=>n.dataset.page==='skins').events.click();await env.settle();
+ const card=env.elements['skin-catalog'].children[0];
+ const text=node=>[node.textContent,...node.children.map(text)].join(' ');
+ assert(!/codex/i.test(text(card)));
+ await card.events.click();await env.fire('skin-apply');
+ for(const id of ['skin-selection','skin-description','skin-source-info','skin-current','skin-feedback'])assert(!/codex/i.test(env.elements[id].textContent));
+ assert.equal(env.calls.find(c=>c.command==='skin_action').args.skinId,'codex-snow-skin');
+});
+test('wallpaper clarity label and explicit apply send the selected numeric value',async()=>{
+ const env=environment(command=>command==='theme_library'?[{id:'test',name:'Test'}]:{installed:true,active:'test',wallpaper:true});
+ await env.settle();env.nav.find(n=>n.dataset.page==='skins').events.click();await env.settle();
+ await env.elements['skin-catalog'].children[0].events.click();
+ env.elements['skin-clarity'].value='85';await env.fire('skin-clarity','input');
+ assert.equal(env.elements['skin-clarity-value'].textContent,'85%');
+ assert.equal(env.calls.filter(c=>c.command==='skin_action').length,0);
+ await env.fire('skin-apply');
+ assert.equal(env.calls.find(c=>c.command==='skin_action').args.wallpaperClarity,85);
+});
+test('community pagination installs without applying; local search and pages remain bounded',async()=>{
+  const catalog=Array.from({length:40},(_,i)=>({id:`theme-${i}`,name:`Theme ${i}`,category:'market'}));
+  const env=environment((command,args)=>{if(command==='theme_library')return catalog;if(command==='community_page')return {total:741,items:[{id:'ver_test',name:'Community',authorDisplayName:'Author',license:'MIT',conversionReason:''}]};if(command==='community_install')return {id:'community-ver-test'};throw Error('Must not apply during install');});
+  await env.settle();env.nav.find(n=>n.dataset.page==='skins').events.click();await env.settle();
+  assert.equal(env.elements['skin-catalog'].children.length,12);await env.fire('skin-next');assert.equal(env.elements['skin-catalog'].children[0].children[1].textContent,'Theme 12');
+  env.elements['skin-search'].value='Theme 39';await env.fire('skin-search','input');assert.equal(env.elements['skin-catalog'].children.length,1);
+  await env.fire('community-refresh');assert.match(env.elements['community-info'].textContent,/741/);
+  await env.elements['community-list'].children[0].children[3].events.click();await env.settle();
+  assert.equal(env.calls.filter(c=>c.command==='community_install').length,1);assert.equal(env.calls.filter(c=>c.command==='skin_action').length,0);
+  await env.fire('community-next');assert.equal(env.calls.filter(c=>c.command==='community_page').at(-1).args.offset,48);
+});
+test('local theme import saves conversion without automatically applying it',async()=>{
+  const imported={id:'imported-test',name:'Local theme',converted:true};
+  const env=environment((command,args)=>{if(command==='import_theme'){assert.equal(args.imageBase64,null);assert.equal(args.config,'{"schemaVersion":1}');return imported;}if(command==='theme_library')return [imported];throw Error('Import must not mutate Harness');});
+  await env.settle();env.elements['theme-config-file'].files=[{size:19,text:async()=>'{"schemaVersion":1}'}];
+  await env.fire('theme-import-form','submit');
+  assert.equal(env.elements['skin-catalog'].children.length,1);assert.equal(env.elements['skin-apply'].disabled,true);
+  assert.equal(env.calls.filter(c=>c.command==='skin_action').length,0);assert.match(env.elements['skin-feedback'].textContent,/Local theme/);
+});
+test('skin preview requires explicit apply and reset uses separate appearance IPC',async()=>{
+  const catalog=JSON.parse(fs.readFileSync(path.join(__dirname,'../desktop/ui/skins.json'),'utf8'));
+  const env=environment((command,args)=>{if(command==='theme_library')return catalog;assert.equal(command,'skin_action');return {supported:true,active:args.action==='apply'?args.skinId:null,installed:args.action==='apply'};});
+  await env.settle();env.nav.find(n=>n.dataset.page==='skins').events.click();await env.settle();
+  assert.equal(env.elements['skin-catalog'].children.length,4);
+  env.elements['skin-catalog'].children[1].events.click();assert.equal(env.calls.filter(c=>c.command==='skin_action').length,0);
+  await env.fire('skin-apply');assert.equal(env.elements['skin-current'].textContent,'暮色紫');
+  const call=env.calls.find(c=>c.command==='skin_action');assert.equal(call.args.skinId,'lavender');assert.equal(call.args.action,'apply');
+  await env.fire('skin-reset');assert.equal(env.elements['skin-current'].textContent,'Harness 默认');
+});
 test('recommendation opens the fixed backend website command and recovers after failure',async()=>{
   let finish;
   const env=environment((command,args)=>{assert.equal(command,'open_recommendation');assert.equal(Object.keys(args).length,0);return new Promise((resolve,reject)=>{finish=reject;});});

@@ -1,0 +1,6 @@
+[
+  {"id":"midnight","name":"午夜蓝","description":"沉静蓝黑，适合夜间开发","bg":"#111827","surface":"#192235","hover":"#293650","text":"#e8eef9","muted":"#a5b4ce","accent":"#8ba7ff","border":"#3a4963"},
+  {"id":"lavender","name":"暮色紫","description":"柔和紫调，突出交互重点","bg":"#191625","surface":"#252036","hover":"#39304f","text":"#f0eafa","muted":"#b8aaca","accent":"#c5a4ff","border":"#4b3f63"},
+  {"id":"forest","name":"松林绿","description":"低饱和深绿，清晰而安静","bg":"#101e1a","surface":"#192c25","hover":"#2a4036","text":"#e4f2e9","muted":"#a4beaf","accent":"#8cdbb0","border":"#3d5849"},
+  {"id":"paper","name":"纸间白","description":"暖白底色，适合白天阅读","bg":"#faf8f3","surface":"#f0ede5","hover":"#e7e1d5","text":"#302e29","muted":"#716b60","accent":"#5c54b3","border":"#d1cabb"}
+]

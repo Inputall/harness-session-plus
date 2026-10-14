@@ -1,10 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod theme_keeper;
 
 use hsp_core::{
     cdp::Error,
     discovery,
     management::{self, Action, Options},
-    recycle,
+    recycle, skin,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -70,6 +71,7 @@ struct Desktop {
     gate: tokio::sync::Mutex<()>,
     report: Mutex<Option<Value>>,
     injection_owner: Mutex<Option<Options>>,
+    skin_owner: Mutex<Option<Options>>,
     recycle_cancel: Mutex<Option<CancellationToken>>,
     root: PathBuf,
 }
@@ -141,10 +143,13 @@ async fn save_settings(
         .gate
         .try_lock()
         .map_err(|_| UiError::new("busy", "请等待当前操作完成。"))?;
-    if state.injection_owner.lock().unwrap().is_some() {
+    if state.injection_owner.lock().unwrap().is_some()
+        || state.skin_owner.lock().unwrap().is_some()
+        || state.root.join("active-theme.json").exists()
+    {
         return Err(UiError::new(
             "injection_active",
-            "请先卸载测试注入，再更改配置，避免遗留页面增强。",
+            "请先卸载页面增强并恢复 Harness 默认皮肤，再更改配置。",
         ));
     }
     let data = serde_json::to_vec_pretty(&settings)
@@ -230,6 +235,284 @@ async fn perform(app: &tauri::AppHandle, action: Action) -> Result<Value, UiErro
 
 fn recycle_error(message: String) -> UiError {
     UiError::new("recycle", &message)
+}
+
+#[tauri::command]
+fn skin_catalog() -> Value {
+    skin::catalog()
+}
+
+fn all_skins(state: &Desktop) -> Result<Value, UiError> {
+    let mut catalog = skin::catalog();
+    let path = state.root.join("imported-themes.json");
+    if path.exists() {
+        let bytes = std::fs::read(path)
+            .map_err(|_| UiError::new("theme", "无法读取本地主题库，请检查文件权限。"))?;
+        let imported: Vec<Value> = serde_json::from_slice(&bytes)
+            .map_err(|_| UiError::new("theme", "本地主题库格式损坏，请备份后检查文件。"))?;
+        if imported.len() > 20 {
+            return Err(UiError::new("theme", "本地主题库超过 20 个主题。"));
+        }
+        for s in imported {
+            hsp_core::theme_import::validate(&s).map_err(|e| UiError::new("theme", &e))?;
+            if !s["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("imported-"))
+            {
+                return Err(UiError::new("theme", "本地主题 ID 无效。"));
+            }
+            catalog.as_array_mut().unwrap().push(s);
+        }
+    }
+    let path = state.root.join("community-themes.json");
+    if path.exists() {
+        let bytes =
+            std::fs::read(path).map_err(|_| UiError::new("theme", "社区主题记录读取失败。"))?;
+        let installed: Vec<Value> = serde_json::from_slice(&bytes)
+            .map_err(|_| UiError::new("theme", "社区主题记录损坏。"))?;
+        for s in installed {
+            hsp_core::theme_import::validate(&s).map_err(|e| UiError::new("theme", &e))?;
+            if !s["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("community-"))
+            {
+                return Err(UiError::new("theme", "社区主题 ID 无效。"));
+            }
+            catalog.as_array_mut().unwrap().push(s);
+        }
+    }
+    Ok(catalog)
+}
+#[tauri::command]
+fn theme_library(state: tauri::State<'_, Desktop>) -> Result<Value, UiError> {
+    all_skins(&state)
+}
+#[tauri::command]
+async fn community_page(offset: usize) -> Result<Value, UiError> {
+    hsp_core::theme_community::page(offset)
+        .await
+        .map_err(|e| UiError::new("theme", &e))
+}
+#[tauri::command]
+async fn community_install(
+    version_id: String,
+    state: tauri::State<'_, Desktop>,
+) -> Result<Value, UiError> {
+    let _guard = state
+        .gate
+        .try_lock()
+        .map_err(|_| UiError::new("busy", "请等待当前操作完成。"))?;
+    let theme = hsp_core::theme_community::install(&version_id)
+        .await
+        .map_err(|e| UiError::new("theme", &e))?;
+    let id = theme["id"].as_str().unwrap();
+    let mut summaries: Vec<Value> = all_skins(&state)?
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| {
+            v["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("community-"))
+        })
+        .cloned()
+        .collect();
+    let directory = state.root.join("community-themes");
+    std::fs::create_dir_all(&directory).map_err(|_| UiError::new("theme", "主题目录创建失败。"))?;
+    save_theme_json(&directory.join(format!("{id}.json")), &theme)?;
+    let mut summary = theme.clone();
+    summary.as_object_mut().unwrap().remove("wallpaper");
+    summary.as_object_mut().unwrap().remove("upstreamManifest");
+    summary["category"] = serde_json::json!("community");
+    summaries.retain(|s| s["id"] != theme["id"]);
+    summaries.push(summary.clone());
+    save_theme_json(
+        &state.root.join("community-themes.json"),
+        &serde_json::json!(summaries),
+    )?;
+    Ok(summary)
+}
+fn save_theme_json(path: &std::path::Path, value: &Value) -> Result<(), UiError> {
+    let temp = path.with_extension("tmp");
+    std::fs::write(
+        &temp,
+        serde_json::to_vec(value).map_err(|_| UiError::new("theme", "主题无法序列化。"))?,
+    )
+    .and_then(|_| std::fs::rename(temp, path))
+    .map_err(|_| UiError::new("theme", "主题保存失败。"))
+}
+#[tauri::command]
+async fn import_theme(
+    config: String,
+    image_base64: Option<String>,
+    author: String,
+    license: String,
+    state: tauri::State<'_, Desktop>,
+) -> Result<Value, UiError> {
+    use base64::Engine;
+    let _guard = state
+        .gate
+        .try_lock()
+        .map_err(|_| UiError::new("busy", "请等待当前操作完成。"))?;
+    if image_base64
+        .as_ref()
+        .is_some_and(|s| s.len() > hsp_core::theme_import::IMAGE_LIMIT * 4 / 3 + 8)
+    {
+        return Err(UiError::new("theme", "图片超过 5 MiB。"));
+    }
+    let image = image_base64
+        .map(|s| base64::engine::general_purpose::STANDARD.decode(s))
+        .transpose()
+        .map_err(|_| UiError::new("theme", "图片编码无效。"))?;
+    let theme = hsp_core::theme_import::convert(&config, image.as_deref(), &author, &license)
+        .map_err(|e| UiError::new("theme", &e))?;
+    let mut library: Vec<Value> = all_skins(&state)?
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| {
+            v["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("imported-"))
+        })
+        .cloned()
+        .collect();
+    library.retain(|s| s["id"] != theme["id"]);
+    if library.len() >= 20 {
+        return Err(UiError::new("theme", "最多保存 20 个导入主题。"));
+    }
+    library.push(theme.clone());
+    let path = state.root.join("imported-themes.json");
+    let temp = state.root.join("imported-themes.tmp");
+    std::fs::write(
+        &temp,
+        serde_json::to_vec(&library).map_err(|_| UiError::new("theme", "主题无法序列化。"))?,
+    )
+    .and_then(|_| std::fs::rename(temp, path))
+    .map_err(|_| UiError::new("theme", "主题保存失败。"))?;
+    Ok(theme)
+}
+
+#[tauri::command]
+async fn skin_action(
+    action: String,
+    skin_id: Option<String>,
+    wallpaper_clarity: Option<u8>,
+    state: tauri::State<'_, Desktop>,
+) -> Result<Value, UiError> {
+    let _guard = state
+        .gate
+        .try_lock()
+        .map_err(|_| UiError::new("busy", "请等待当前操作完成。"))?;
+    // Serialize reset/apply with the independent keeper to prevent stale reapplication.
+    let operation_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(state.root.join("theme-operation.lock"))
+        .map_err(|_| UiError::new("theme", "无法锁定主题配置。"))?;
+    operation_file
+        .try_lock()
+        .map_err(|_| UiError::new("busy", "主题正在恢复，请稍后重试。"))?;
+    let previous = state.skin_owner.lock().unwrap().clone();
+    let mut options = previous
+        .clone()
+        .unwrap_or_else(|| state.settings.lock().unwrap().options());
+    let selected = if action == "apply" {
+        let id = skin_id
+            .as_deref()
+            .ok_or_else(|| UiError::new("skin", "请选择皮肤。"))?;
+        let summary = all_skins(&state)?
+            .as_array()
+            .and_then(|v| v.iter().find(|s| s["id"].as_str() == Some(id)))
+            .cloned()
+            .ok_or_else(|| UiError::new("skin", "请选择有效的皮肤。"))?;
+        let mut full = if id.starts_with("community-") {
+            let bytes = std::fs::read(
+                state
+                    .root
+                    .join("community-themes")
+                    .join(format!("{id}.json")),
+            )
+            .map_err(|_| UiError::new("theme", "社区主题文件缺失，请重新安装。"))?;
+            let value: Value = serde_json::from_slice(&bytes)
+                .map_err(|_| UiError::new("theme", "社区主题文件损坏。"))?;
+            if value["id"] != id {
+                return Err(UiError::new("theme", "社区主题身份不一致。"));
+            }
+            value
+        } else {
+            skin::select(id).unwrap_or(summary)
+        };
+        if let Some(clarity) = wallpaper_clarity {
+            if clarity > 100 {
+                return Err(UiError::new("skin", "背景清晰度须在 0–100 之间。"));
+            }
+            full["wallpaperClarity"] = serde_json::json!(clarity);
+        }
+        full["persistenceRevision"] = serde_json::json!(format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        Some(full)
+    } else {
+        None
+    };
+    if action == "apply" {
+        let (_, targets) = discovery::discover(options.port).await?;
+        let target = match discovery::select(&targets, options.target_id.as_deref()) {
+            Err(Error::TargetNotFound) if previous.is_some() => discovery::select(&targets, None)?,
+            other => other?,
+        };
+        options.target_id = Some(target.id);
+        // Track the explicit target before evaluation, including uncertain outcomes.
+        *state.skin_owner.lock().unwrap() = Some(options.clone());
+    }
+    if action == "reset" {
+        match std::fs::remove_file(state.root.join("active-theme.json")) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(UiError::new("theme", "无法停止主题自动恢复。")),
+        }
+        // Preserve an explicit live target; only rebind a stale one if unique.
+        let (_, targets) = discovery::discover(options.port).await?;
+        if matches!(
+            discovery::select(&targets, options.target_id.as_deref()),
+            Err(Error::TargetNotFound)
+        ) {
+            options.target_id = Some(discovery::select(&targets, None)?.id);
+        }
+    }
+    let mut result = skin::execute_with_skin(&options, &action, selected.clone()).await?;
+    if action == "apply" {
+        let full = selected.unwrap();
+        let saved = theme_keeper::SavedTheme {
+            options: options.clone(),
+            revision: full["persistenceRevision"].as_str().unwrap().into(),
+            skin: full,
+        };
+        saved.validate().map_err(|e| UiError::new("theme", &e))?;
+        let path = state.root.join("active-theme.json");
+        let temp = state.root.join("active-theme.tmp");
+        std::fs::write(
+            &temp,
+            serde_json::to_vec(&saved).map_err(|_| UiError::new("theme", "主题保存失败。"))?,
+        )
+        .and_then(|_| std::fs::rename(temp, path))
+        .map_err(|_| UiError::new("theme", "主题已应用，但自动恢复配置保存失败。"))?;
+        theme_keeper::spawn(&state.root)
+            .map_err(|_| UiError::new("theme", "主题已保存，但后台主题守护启动失败。"))?;
+        result["persistent"] = serde_json::json!(true);
+    }
+    if action == "reset" {
+        *state.skin_owner.lock().unwrap() = None;
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -525,14 +808,28 @@ fn open_recommendation() -> Result<(), UiError> {
             .creation_flags(0x08000000)
             .spawn()
             .map_err(|error| UiError::new("open_website", &format!("无法打开官网：{error}")))?;
-        std::thread::spawn(move || { let _ = child.wait(); });
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
         Ok(())
     }
     #[cfg(not(windows))]
-    Err(UiError::new("open_website", "当前仅支持 Windows 默认浏览器。"))
+    Err(UiError::new(
+        "open_website",
+        "当前仅支持 Windows 默认浏览器。",
+    ))
 }
 
 fn main() {
+    let args: Vec<_> = std::env::args_os().collect();
+    if args.get(1).is_some_and(|arg| arg == "--theme-keeper") {
+        if let Some(root) = args.get(2) {
+            if let Ok(runtime) = tokio::runtime::Runtime::new() {
+                let _ = runtime.block_on(theme_keeper::run(std::path::Path::new(root)));
+            }
+        }
+        return;
+    }
     tauri::Builder::default()
         .setup(|app| {
             let root = app.path().app_config_dir()?;
@@ -552,9 +849,14 @@ fn main() {
                 gate: tokio::sync::Mutex::new(()),
                 report: Mutex::new(None),
                 injection_owner: Mutex::new(None),
+                skin_owner: Mutex::new(None),
                 recycle_cancel: Mutex::new(None),
                 root,
             });
+            let state = app.state::<Desktop>();
+            if state.root.join("active-theme.json").exists() {
+                theme_keeper::spawn(&state.root)?;
+            }
             let open = MenuItem::with_id(app, "open", "打开管理窗口", true, None::<&str>)?;
             let diagnose = MenuItem::with_id(app, "diagnose", "检查连接", true, None::<&str>)?;
             let pause = MenuItem::with_id(app, "pause", "卸载测试增强", true, None::<&str>)?;
@@ -608,7 +910,13 @@ fn main() {
             export_report,
             quit_app,
             exit_without_cleanup,
-            open_recommendation
+            open_recommendation,
+            skin_catalog,
+            theme_library,
+            community_page,
+            community_install,
+            import_theme,
+            skin_action
         ])
         .run(tauri::generate_context!())
         .expect("Harness Session Plus desktop failed to start");

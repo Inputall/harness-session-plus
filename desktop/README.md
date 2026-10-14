@@ -1,6 +1,6 @@
 # Harness Session Plus 桌面版
 
-当前版本 **0.2.2**，Windows Tauri 2 桌面程序。Rust 宿主与静态 HTML/CSS/JavaScript 前端，已完成 release 构建，当前提供独立 EXE，没有安装包或代码签名。
+当前版本 **0.5.3**，Windows Tauri 2 桌面程序。Rust 宿主与静态 HTML/CSS/JavaScript 前端，已完成 release 构建，当前提供独立 EXE，没有安装包或代码签名。
 
 完整功能、兼容性、调试参数和故障排查见[项目 README](../README.md)。
 
@@ -22,7 +22,7 @@ cargo build --manifest-path desktop/src-tauri/Cargo.toml --release --locked
 3. 检查连接，在“会话回收站”点击“安装回收站增强”。
 4. 重新打开 Harness 会话菜单，使用“移入回收站”。管理窗口支持搜索、单项及批量恢复。
 
-保持工具运行。关闭窗口隐藏到托盘，退出时尝试卸载增强，不结束 Harness。页面刷新或 Harness 重启后需重新安装。
+关闭窗口会隐藏到托盘。回收站菜单增强在页面刷新或 Harness 重启后需重新安装。退出管理工具不会清除已应用的 Harness 主题：独立主题守护会按本机保存的配置恢复样式；Harness 调试端口必须可访问，断线恢复通常有数秒延迟。电脑重启、用户注销或手动结束守护后，需重新打开工具启动它，本版不设置开机自启。点击“恢复 Harness 默认”会停止守护并清除样式覆盖。
 
 ## 功能和边界
 
@@ -33,12 +33,13 @@ cargo build --manifest-path desktop/src-tauri/Cargo.toml --release --locked
 - 明暗主题、明确页面选择、报告导出与系统托盘。
 - 概览页 CoderPlant · 码源推荐卡片，支持明暗主题和窄窗口布局；点击后使用默认浏览器打开固定官网地址。
 - 永久删除保持禁用，删除能力检查仅只读显示原因。
+- Harness 皮肤中心：四套配色、40 款转换主题，支持轻量预览、搜索分类分页、背景清晰度调节（0–100%，默认 70%）、应用及恢复默认。DreamSkin 社区支持联网分页浏览及按需核验安装。手动导入 `schemaVersion: 1` 的主题 JSON（64 KiB）和可选 PNG/JPEG/WebP（5 MiB），最多保存 20 个，社区主题不占此名额。应用后会在 `active-theme.json` 保存主题、壁纸、清晰度和恢复版本；独立后台守护每三秒检查样式，在 Harness 页面断线重连或覆盖丢失时尝试恢复。仅在唯一页面匹配时应用，不修改会话、Harness 安装包或原生主题偏好。完整退出并重启 Harness 的恢复流程尚未实测；电脑重启后需打开工具启动守护，本版不设置开机自启。
 
 原生回收站只适配已验证安装包的 Harness 0.2.0-rc.2，见[验证记录](../docs/recycle-validation.md)和[删除审计](../docs/permanent-delete-audit.md)。
 
 ## 数据和权限
 
-Tauri `app_config_dir` 保存 settings.json、recycle.sqlite3 和用户主动导出的 capability-report.json。回收站记录包含 ID、标题、工作区和操作状态，不保存聊天正文。
+Tauri `app_config_dir` 保存 settings.json、active-theme.json、recycle.sqlite3、imported-themes.json、community-themes.json、community-themes/ 和用户主动导出的 capability-report.json。回收站记录包含 ID、标题、工作区和操作状态，不保存聊天正文。主题守护独立于管理窗口，但不会随 Windows 开机自动启动。
 
 固定 Rust commands 执行业务。管理前端不直接修改 Harness 文件，没有 shell/filesystem 插件；CSP 禁止远程脚本。页面 JS 用于界面和版本受约束的接口桥接，不负责文件清理或持久化。
 
@@ -59,7 +60,9 @@ Tauri `app_config_dir` 保存 settings.json、recycle.sqlite3 和用户主动导
 ```powershell
 cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings
-node --test fixtures/desktop-ui.test.cjs fixtures/injection.test.cjs fixtures/recycle-menu.test.cjs
+node --test fixtures/desktop-ui.test.cjs fixtures/skin.test.cjs fixtures/injection.test.cjs fixtures/recycle-menu.test.cjs
 ```
 
-桌面构建和 Clippy 已通过，前端测试是 DOM/IPC 模拟测试。真实 Harness 专用同名会话归档与恢复闭环已通过，不代表所有窗口、托盘、断线和升级场景均已完成真实验收。直接在浏览器打开 HTML 不能使用桌面功能。
+截至 2026-10-14，桌面 0.5.3 release 构建、Clippy 和前端测试通过；前端测试是 DOM/IPC 模拟测试。真实 Harness 专用同名会话归档与恢复闭环已通过。主题守护已验证管理工具退出后的主题保持及覆盖丢失恢复，但没有重启用户正在使用的 Harness，完整退出重启流程尚未实测。直接在浏览器打开 HTML 不能使用桌面功能。
+
+主题只转换配色与图片，不执行包内 CSS 或脚本；ZIP 需先解压。作者及许可见[素材说明](ui/themes/README.md)，真实配色与壁纸验收见[皮肤验证](../docs/skin-validation.md)。
