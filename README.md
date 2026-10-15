@@ -6,6 +6,13 @@
 
 > “移入回收站”是可恢复的原生归档。**永久删除尚未实现，按钮保持禁用**；“检查删除能力”只读取状态，不删除文件或会话。
 
+## 下载 Windows 桌面版
+
+- [直接下载 0.6.0 可执行文件（Windows x64）](https://github.com/Inputall/harness-session-plus/releases/download/v0.6.0/hsp-desktop.exe)
+- [版本说明与 SHA256 校验文件](https://github.com/Inputall/harness-session-plus/releases/tag/v0.6.0)
+
+下载 `hsp-desktop.exe` 后直接运行，无需安装 Rust、Node 或编译源代码；运行环境需要 Windows 和 WebView2 Runtime。当前为未签名的便携 EXE，没有 MSI/NSIS 安装包。更新时先从托盘完全退出旧管理工具，再运行新版；Harness 的本机调试连接要求仍适用。
+
 ## 阅读导航
 
 - 首次使用：[快速开始](#快速开始)、[管理窗口](#管理窗口)
