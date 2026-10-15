@@ -1372,7 +1372,7 @@ dependencies = [
 
 [[package]]
 name = "hsp-desktop"
-version = "0.5.3"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "hsp-core",
@@ -1382,6 +1382,7 @@ dependencies = [
  "tauri-build",
  "tokio",
  "tokio-util",
+ "windows",
 ]
 
 [[package]]

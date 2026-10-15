@@ -7,8 +7,9 @@
       signal:AbortSignal.timeout(5000), headers:{'content-type':'application/json'},
       body:JSON.stringify({type:'client-request',rpcId,method:endpoint,payload:{args}})});
     const value=await response.json();
+    if(expectedOrigin && (await window.dshDesktopBoot.ready()).streamBaseUrl!==expectedOrigin)throw Error('Host generation changed');
     if(!response.ok||value.type!=='server-response'||value.rpcId!==rpcId)throw Error('Native protocol mismatch');
-    if(value.result?.error)throw Error(value.result.error.code||'Native request refused');
+    if(value.result?.error){const error=Error(value.result.error.code||'Native request refused');error.searchDisabled=endpoint==='session/search'&&String(value.result.error.message).includes('openAt "never"');throw error;}
     if(!value.result || !Object.hasOwn(value.result,'value'))throw Error('Native result unavailable');
     return value.result.value;
   };
@@ -30,7 +31,7 @@
     const [workspaces,sessions]=await Promise.all([baseline(),rpc('session/list',{_request:{}})]);
     if((await window.dshDesktopBoot.ready()).streamBaseUrl!==hostOrigin)throw Error('Host generation changed');
     if(!Array.isArray(workspaces.items)||!Array.isArray(workspaces.archivedSessionIds)||!Array.isArray(sessions.items))throw Error('Unsupported list');
-    return {hostOrigin,workspaces, sessions:sessions.items.map(s=>({sessionId:s.sessionId,title:s.projections?.values?.title??'',cwd:s.cwd,running:s.running,blank:s.blank}))};
+    return {hostOrigin,workspaces, sessions:sessions.items.map(s=>({sessionId:s.sessionId,title:s.projections?.values?.title??'',cwd:s.cwd,running:s.running,blank:s.blank,updatedAt:s.updatedAt,origin:s.origin,cursor:s.projections?.kind==='sequenced'?s.projections.asOfSeq:null}))};
   };
   return {snapshot,baseline,rpc};
 })()

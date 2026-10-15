@@ -192,12 +192,21 @@ impl Client {
     }
     // No cached context ID: evaluate in the current main world. Navigation during a request invalidates its result.
     pub async fn evaluate(&self, expression: &str, cancel: &CancellationToken) -> Result<Value> {
+        self.evaluate_with_timeout(expression, cancel, Duration::from_secs(5))
+            .await
+    }
+    pub async fn evaluate_with_timeout(
+        &self,
+        expression: &str,
+        cancel: &CancellationToken,
+        timeout: Duration,
+    ) -> Result<Value> {
         let epoch = self.state.epoch.load(Ordering::SeqCst);
         let result = self
             .request(
                 "Runtime.evaluate",
                 json!({"expression":expression,"returnByValue":true,"awaitPromise":true}),
-                Duration::from_secs(5),
+                timeout,
                 cancel,
             )
             .await?;

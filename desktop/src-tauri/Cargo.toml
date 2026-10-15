@@ -1,6 +1,6 @@
 [package]
 name = "hsp-desktop"
-version = "0.5.3"
+version = "0.6.0"
 edition = "2021"
 build = "build.rs"
 
@@ -15,6 +15,9 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 base64 = "0.22"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Data_Xml_Dom", "UI_Notifications", "Foundation", "Win32_System_WinRT", "Win32_UI_WindowsAndMessaging", "Win32_System_Registry", "Win32_Security", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant"] }
 
 [features]
 default = ["custom-protocol"]

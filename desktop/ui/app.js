@@ -5,7 +5,7 @@ const invoke = (command, args = {}) => {
   return window.__TAURI__.core.invoke(command, args);
 };
 const state = {settings:null, busy:false, connected:false, installed:null, autoTimer:null, failures:0, toastTimer:null, records:[], selected:new Set()};
-const titles = {overview:"概览",trash:"会话回收站",connection:"连接与增强",capabilities:"能力探测",skins:"皮肤中心",settings:"设置"};
+const titles = {overview:"概览",sessions:"会话中心",trash:"会话回收站",connection:"连接与增强",capabilities:"能力探测",skins:"皮肤中心",settings:"设置"};
 const actionNames = {diagnose:"连接检查",inject_test:"测试注入",remove_injection:"卸载增强",probe_capabilities:"只读能力探测"};
 function navigate(page) {
   for (const section of document.querySelectorAll(".page")) section.hidden = section.id !== `page-${page}`;
@@ -16,10 +16,13 @@ function navigate(page) {
   }
   $("crumb").textContent = titles[page];
   if(page==='skins')loadSkins();
+  if(page==='sessions')window.sessionCenterOpen?.();
 }
 const skinState={catalog:[],selected:null,loading:false,running:false,page:0,communityOffset:0,communityTotal:0,communityItems:[],communityLoading:false};
 // Keep upstream identifiers and attribution files intact; use neutral UI labels.
-const themeText=value=>String(value??'').replace(/codex(?:\+\+)?[\s-]*/gi,'').trim();
+const themeText=value=>String(value??'').replace(/codex(?:\+\+|plusplus)?[\s-]*/gi,'').trim();
+// Presentation aliases only: never use these labels as session IDs or API arguments.
+const sessionLabel=value=>String(value??'').replace(/codex(?:\+\+|plusplus)?/gi,'编程助手');
 const themeDisplay=theme=>({...theme,name:themeText(theme.name)||'未命名主题',description:themeText(theme.description),author:themeText(theme.author),authorDisplayName:themeText(theme.authorDisplayName),license:themeText(theme.license),conversionReason:themeText(theme.conversionReason),tags:(theme.tags||[]).map(themeText)});
 async function loadSkins(){
   if(skinState.loading||skinState.catalog.length)return;skinState.loading=true;
@@ -120,8 +123,8 @@ function renderTrash(records){
   if(!visible.length){const empty=document.createElement('div');empty.className='empty-state';const h=document.createElement('h2');h.textContent=query?'没有匹配记录':'回收站为空';const p=document.createElement('p');p.textContent='只显示由本工具移入且尚未恢复的会话。';empty.append(h,p);$("trash-list").append(empty);return;}
   for(const record of visible){
     const row=document.createElement('div');row.className='trash-row';
-    const check=document.createElement('input');check.type='checkbox';check.disabled=record.state!=='archived';check.setAttribute('aria-label',`选择 ${record.title}`);check.addEventListener('change',()=>{check.checked?state.selected.add(record.sessionId):state.selected.delete(record.sessionId);$("restore-selected").disabled=state.busy||!state.selected.size;$("check-delete").disabled=state.busy||!state.selected.size;});
-    const info=document.createElement('div');const title=document.createElement('strong');title.textContent=record.title||'未命名会话';const meta=document.createElement('small');meta.textContent=`${record.workspaceTitle} · ${new Date(record.movedAt).toLocaleString('zh-CN')} · ${recordStates[record.state]||record.state}`;info.append(title,meta);if(record.error){const error=document.createElement('small');error.textContent=record.error;info.append(error);}
+    const check=document.createElement('input');check.type='checkbox';check.disabled=record.state!=='archived';check.setAttribute('aria-label',`选择 ${sessionLabel(record.title)}`);check.addEventListener('change',()=>{check.checked?state.selected.add(record.sessionId):state.selected.delete(record.sessionId);$("restore-selected").disabled=state.busy||!state.selected.size;$("check-delete").disabled=state.busy||!state.selected.size;});
+    const info=document.createElement('div');const title=document.createElement('strong');title.textContent=sessionLabel(record.title)||'未命名会话';const meta=document.createElement('small');meta.textContent=`${sessionLabel(record.workspaceTitle)} · ${new Date(record.movedAt).toLocaleString('zh-CN')} · ${recordStates[record.state]||record.state}`;info.append(title,meta);if(record.error){const error=document.createElement('small');error.textContent=record.error;info.append(error);}
     const button=document.createElement('button');button.className='button';button.textContent='恢复';button.disabled=record.state!=='archived';button.addEventListener('click',()=>restore([record.sessionId]));row.append(check,info,button);$("trash-list").append(row);
   }
 }
@@ -146,7 +149,7 @@ $("check-delete").addEventListener('click',async()=>{
   try{const report=await invoke('check_permanent_delete',{sessionIds:[...state.selected]});
     const box=$("delete-report");box.replaceChildren();const heading=document.createElement('strong');heading.textContent='只读检查完成：永久删除未开放';box.append(heading);
     const reason=document.createElement('p');reason.textContent=report.reason;box.append(reason);
-    for(const target of report.targets){const item=document.createElement('p');item.textContent=`${target.title||target.sessionId}：${target.reason}`;box.append(item);}box.hidden=false;
+    for(const target of report.targets){const item=document.createElement('p');item.textContent=`${sessionLabel(target.title)||target.sessionId}：${target.reason}`;box.append(item);}box.hidden=false;
     log('已完成删除能力只读检查，未执行删除');
   }catch(e){toast(e.message||'删除能力检查失败',true);}finally{busy(false);}
 });

@@ -1,8 +1,8 @@
 # Harness Session Plus
 
-为 Windows 版 DeepSeek Harness 提供会话回收站的独立桌面工具。通过本机 Chrome DevTools Protocol（CDP）添加菜单增强，使用 Harness 原生归档与恢复机制保留会话数据，在管理窗口中搜索和恢复会话。
+为 Windows 版 DeepSeek Harness 提供会话搜索、上下文恢复、关注提醒、会话回收站和皮肤中心的独立桌面工具。通过本机 Chrome DevTools Protocol（CDP）连接，使用已验证的原生只读查询及归档与恢复机制。
 
-当前桌面版本：**0.5.3**。采用 Rust + Tauri 2，前端使用 HTML/CSS/JavaScript，没有 Node 后端或 Electron 宿主，不修改 Harness 安装包。
+当前桌面版本：**0.6.0**。采用 Rust + Tauri 2，前端使用 HTML/CSS/JavaScript，没有 Node 后端或 Electron 宿主，不修改 Harness 安装包。
 
 > “移入回收站”是可恢复的原生归档。**永久删除尚未实现，按钮保持禁用**；“检查删除能力”只读取状态，不删除文件或会话。
 
@@ -18,6 +18,10 @@
 
 | 功能 | 状态 |
 | --- | --- |
+| 会话中心 | 标题、工作区、路径及正文搜索，支持状态筛选与分页 |
+| 摘要与继续任务 | 最近 20 条文本消息摘录、可编辑提示词、复制与 Markdown 导出；不调用模型 |
+| 关注与提醒 | 最多关注 20 个会话，等待审批/回答/计划审阅、运行停止及可确认错误提醒 |
+| 返回原会话 | 工具内通知及 Windows 通知点击后按真实 ID 导航；归档会话需先恢复 |
 | 会话菜单“移入回收站” | 核对真实会话 ID 后执行原生归档 |
 | Harness 侧栏回收站入口 | 打开本工具的管理窗口 |
 | 回收站列表 | 展示标题、原工作区、移入时间、操作状态 |
@@ -158,6 +162,23 @@ Invoke-RestMethod http://127.0.0.1:9223/json/list
 
 备份工具记录时，先从托盘正常退出，再复制应用配置目录。`recycle.sqlite3` 是记录与核对依据，不能代替 Harness 自身会话数据的备份。不要通过删除这个数据库来“清空会话”：这会丢失工具记录，并不会永久删除 Harness 中的会话。
 
+## 会话中心：搜索 → 恢复上下文 → 关注 → 返回
+
+1. 打开“会话中心”，点击“刷新会话”。按标题、工作区、路径或 ID 即时筛选；输入对话关键词后点击“搜索正文”。可进一步按工作区、运行状态和归档状态筛选。
+2. 选择会话，查看真实消息摘录和事件序号。填写“下一步想做什么”，生成可编辑的继续任务提示词；点击“复制提示词”或“导出 Markdown”。点击“回到 Harness 会话”后可手动粘贴发送，本工具不会自动发送消息。
+3. 点击“关注此会话”，每 10 秒检查变化。首次读取仅建立基线，避免把旧状态当成新通知。支持取消单项关注和停止全部关注。
+4. 可勾选 Windows 通知，并先用“测试桌面通知”核对系统设置。通知不显示会话标题或正文；点击后返回工具并按真实会话 ID 打开 Harness 会话。工具完全退出后停止关注，关闭到托盘时继续。
+
+当前安装的 Harness 将正文索引设为 `openAt: never`。工具不会修改此配置，而是自动回退到只读搜索最近消息：最多扫描 50 个普通非空会话、每个最近 20 条消息，最多三个并发读取，并在界面显示扫描数、读取失败数和范围限制。**这是有界搜索，不能保证覆盖全部历史正文**。原生索引可用时使用原生搜索，最多返回 20 个命中；没有命中不代表全历史没有相关内容。
+
+“会话摘要”是最近一页的原文摘录，最多 20 条用户/助手文本消息、每条最多 6000 个 UTF-16 单元。不会生成未经验证的语义总结，也不读取图片、附件、工具输出或推理内容到提示词中。历史对话以引用标记；生成内容不代表文件现状、测试结论或任务已经完成。
+
+运行状态来自原生列表；等待交互状态只读取已确认结构的侧栏 React 状态，无法观测时标记未知。仅在观测到新状态时提醒；停止运行只提示查看结果。若只读读回的新 `turn/end` 事件明确为 `error` 且事件序号晚于上次基线，才提示错误。10 秒轮询可能遗漏两个检查之间短暂出现的状态。导航依赖 Harness 侧栏已渲染的真实回调，工作区未展开时需展开后重试；不会用标题或 DOM 序号选择会话，也不会为打开会话自动取消归档。
+
+断线、配置变更或 profile/进程代次改变后关注停止，需要重新开启。当前不会持久保存搜索正文或关注清单；只有主动复制、导出的内容会离开内存。导出保存至工具配置目录的 `exports/`，内容可能包含聊天及项目路径，请在分享前检查。首次启用/测试 Windows 通知会在当前用户注册本工具的通知身份（`HKCU\Software\Classes\AppUserModelId\com.harness-session-plus.manager`），并创建开始菜单的 `Harness Session Plus Notifications.lnk`；这是普通启动快捷方式，不是开机自启。系统禁用或拒绝通知时保留工具内提醒。通知点击的会话路由需要工具进程仍在运行，完全退出后不保证旧通知可恢复原会话。
+
+适配与验收详情：[会话中心验证](docs/session-center-validation.md)。
+
 ## CLI
 
 CLI 用于诊断及测试注入；真实回收站操作由桌面工具完成：
@@ -201,10 +222,12 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings
-node --test fixtures/injection.test.cjs fixtures/recycle-menu.test.cjs fixtures/desktop-ui.test.cjs fixtures/skin.test.cjs
+node --test fixtures/injection.test.cjs fixtures/recycle-menu.test.cjs fixtures/desktop-ui.test.cjs fixtures/skin.test.cjs fixtures/session-center.test.cjs
 ```
 
 Node 仅用于开发脚本和 JS 模拟测试，不是产品运行依赖。截至 2026-10-14，桌面 0.5.3 release 构建成功；workspace/core 与桌面合计 18 项 Rust 测试、25 项 JS 测试通过，core/desktop Clippy 零警告。主题守护的真实 Harness 验收细节和限制见[主题保持说明](docs/persistent-themes.md)。
+
+2026-10-15 新增 0.6.0 会话中心：20 项 Rust 测试、31 项 JS 测试通过。真实 Tauri/Harness 已验证最近正文搜索回退、摘录、提示词生成、导出、关注启停、会话导航；Windows 已接受原生测试通知。OS 实际弹出/点击和真实等待/失败任务场景与自动测试分开记录，详见[会话中心验证](docs/session-center-validation.md)。
 
 真实 Harness 验收使用两个新建同名专用会话：仅按指定 ID 归档其中一个，再恢复并核对工作区，另一个未被归档。没有执行真实永久删除。模拟测试不能替代完整窗口、托盘及升级兼容验收，见[回收站验证](docs/recycle-validation.md)。
 
@@ -229,6 +252,7 @@ DEVELOPMENT_PLAN.md   原始分阶段开发方案
 
 | 桌面版本 | 主要变化 |
 | --- | --- |
+| 0.6.0 | 新增会话中心：原生正文搜索与索引关闭时的只读回退、真实消息摘录、继续任务提示词、复制/导出、后台关注、Windows 通知和按 ID 返回会话 |
 | 0.5.3 | 应用主题及清晰度写入本机配置；新增独立主题守护，管理工具退出后仍可恢复页面覆盖，并在显式恢复默认时停止守护 |
 | 0.5.2 | 新增本地主题库与社区按需安装；增强背景清晰度调节和主题状态管理 |
 | 0.5.1 | 扩展主题导入、预览与 Harness 页面应用能力 |

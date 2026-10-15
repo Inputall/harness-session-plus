@@ -18,7 +18,8 @@ function environment(responder) {
   }
   const elements = Object.fromEntries([...html.matchAll(/\bid="([^"]+)"/g)].map(match=>[match[1],new Element(match[1])]));
   const pages=Object.values(elements).filter(e=>e.id.startsWith('page-'));
-  const nav = ['overview','trash','connection','capabilities','skins','settings'].map(page=>{const el=new Element();el.dataset.page=page;return el;});
+  elements['session-filter'].value='all';
+  const nav = ['overview','sessions','trash','connection','capabilities','skins','settings'].map(page=>{const el=new Element();el.dataset.page=page;return el;});
   const actions=['diagnose','inject_test','remove_injection','probe_capabilities'].map(action=>{const el=new Element();el.dataset.action=action;return el;});
   const navShortcuts=['connection','capabilities'].map(page=>{const el=new Element();el.dataset.nav=page;return el;});
   const calls=[];const intervals=new Map();let nextTimer=1;
@@ -33,7 +34,7 @@ function environment(responder) {
 const diagnostic={browser:'Mock/1',injection:{installed:false,dataOperations:false},pageRecognized:true};
 test('theme UI uses neutral labels without changing stored theme identity',async()=>{
  assert(!/codex/i.test(html));
- const skin={id:'codex-snow-skin',name:'Codex Snow Skin',description:'由 Codex++ 转换的明亮主题',author:'Author / Codex contributors',license:'MIT',source:'https://github.com/example/Codex-Skin',converted:true};
+ const skin={id:'codex-snow-skin',name:'CodexPlusPlus Snow Skin',description:'由 Codex++ 转换的明亮主题',author:'Author / Codex contributors',license:'MIT',source:'https://github.com/example/Codex-Skin',converted:true};
  const env=environment(command=>command==='theme_library'?[skin]:{installed:true,active:skin.id,wallpaper:true});
  await env.settle();env.nav.find(n=>n.dataset.page==='skins').events.click();await env.settle();
  const card=env.elements['skin-catalog'].children[0];
@@ -100,7 +101,7 @@ test('navigation and IPC results update UI without enabling mutation commands',a
   await vm.runInContext('run("inject_test")',env.context);
   assert.equal(env.elements['metric-injection'].textContent,'已安装');
   assert.match(env.elements['injection-detail'].textContent,/1 个/);
-  env.nav[1].events.click();assert.equal(env.elements['page-trash'].hidden,false);assert.equal(env.elements['page-overview'].hidden,true);
+  env.nav.find(n=>n.dataset.page==='trash').events.click();assert.equal(env.elements['page-trash'].hidden,false);assert.equal(env.elements['page-overview'].hidden,true);
   assert(env.calls.every(call=>!['archive_session','restore_session','permanently_delete_session'].includes(call.command)));
 });
 test('ambiguous connection is not success and requires explicit target selection',async()=>{
@@ -129,11 +130,12 @@ test('double-click does not start parallel actions; cleanup failure offers expli
 });
 test('recycle selection restores only selected IDs and renders title as text',async()=>{
   let restored=false;
-  const records=[{sessionId:'id-a',title:'<img src=x onerror=bad()>',workspaceTitle:'workspace',movedAt:1,state:'archived'},{sessionId:'id-b',title:'same',workspaceTitle:'workspace',movedAt:2,state:'unknown'}];
+  const records=[{sessionId:'id-a',title:'Codex <img src=x onerror=bad()>',workspaceTitle:'workspace',movedAt:1,state:'archived'},{sessionId:'id-b',title:'same',workspaceTitle:'workspace',movedAt:2,state:'unknown'}];
   const env=environment((command,args)=>{if(command==='refresh_trash')return restored?[]:records;if(command==='restore_sessions'){assert.deepEqual(Array.from(args.sessionIds),['id-a']);restored=true;return {outcomes:[{ok:true,sessionId:'id-a'}]};}throw Error('Unexpected command');});
   await env.settle();await env.fire('refresh-trash');
   const rows=env.elements['trash-list'].children;
-  assert.equal(rows.length,2);assert.equal(rows[0].children[1].children[0].textContent,records[0].title);
+  assert.equal(rows.length,2);assert.equal(rows[0].children[1].children[0].textContent,'编程助手 <img src=x onerror=bad()>');
+  assert.equal(records[0].title,'Codex <img src=x onerror=bad()>');
   assert.equal(rows[1].children[0].disabled,true);assert.equal(rows[1].children[2].disabled,true);
   const check=rows[0].children[0];check.checked=true;check.events.change();
   assert.equal(env.elements['restore-selected'].disabled,false);
@@ -150,4 +152,67 @@ test('permanent deletion check is read-only and displays backend refusal',async(
   await env.fire('check-delete');assert.equal(env.elements['delete-report'].hidden,false);
   assert.equal(env.elements['delete-report'].children[1].textContent,'No durable deletion API');
   assert(env.calls.every(c=>!['delete_sessions','permanently_delete_session'].includes(c.command)));
+});
+
+const sessionSource=fs.readFileSync(path.join(__dirname,'../desktop/ui/session-center.js'),'utf8');
+test('session center searches body, copies bounded context, exports and navigates by ID',async()=>{
+ const s={sessionId:'a',title:'Codex++ <img onerror=x>',workspace:'ws',cwd:'D:/work',running:false,archived:false};
+ const env=environment((command,args)=>{
+  if(command==='session_query'){
+   if(args.request.action==='list')return {sessions:[s],profile:'profile-a'};
+   if(args.request.action==='search')return {sessions:[s],profile:'profile-a',hits:[{sessionId:'a',snippet:'needle in body'}],searchMode:'recent',scanned:1,hasMore:true};
+   if(args.request.action==='detail')return {session:s,messages:[{seq:1,role:'user',text:'needle in body'}],throughSeq:1,hasMore:true,profile:'profile-a'};
+   if(args.request.action==='open')return {opened:true};
+  }
+  if(command==='session_export')return 'D:/export.md';
+  if(command==='session_watch')return null;
+  throw Error(command);
+ });
+ let copied='';env.context.navigator={clipboard:{writeText:async text=>{copied=text;}}};vm.runInContext(sessionSource,env.context);await env.settle();
+ env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ assert.equal(env.elements['session-results'].children[0].children[0].textContent,'编程助手 <img onerror=x>');
+ env.elements['session-search'].value='needle';await env.fire('session-search-form','submit');
+ assert.match(env.elements['session-count'].textContent,/索引关闭/);
+ await env.elements['session-results'].children[0].events.click();
+ assert.equal(env.elements['session-detail-title'].textContent,'编程助手 <img onerror=x>');
+ env.elements['session-next-task'].value='继续检查';await env.fire('session-next-task','input');await env.fire('session-copy');
+ assert.match(copied,/needle in body/);assert.match(copied,/历史对话引用/);assert.match(copied,/继续检查/);
+ assert(copied.includes(s.title),'Exported context must preserve the original session title');
+ await env.fire('session-export');await env.fire('session-open');
+ assert.equal(env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='open').args.request.sessionId,'a');
+ assert.equal(env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='open').args.expectedProfile,'profile-a');
+ await env.fire('session-watch-add');assert.match(env.elements['session-watch-status'].textContent,/1/);await env.fire('session-watch-stop');assert.equal(env.elements['session-watch-status'].textContent,'已停止');
+});
+test('late detail and changed search terms cannot expose stale selection or stale hits',async()=>{
+ let detailResolve;
+ const s={sessionId:'a',title:'Task',workspace:'ws',running:false,archived:false};
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[s],profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return new Promise(r=>{detailResolve=r;});
+  if(command==='session_query'&&args.request.action==='search')return {sessions:[s],profile:'p',hits:[],searchMode:'native',hasMore:false};
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ const selecting=env.elements['session-results'].children[0].events.click();await env.settle();
+ env.elements['session-search'].value='missing';await env.fire('session-search-form','submit');
+ detailResolve({session:s,messages:[{seq:1,role:'user',text:'stale content'}],throughSeq:1});await selecting;
+ assert.equal(env.elements['session-copy'].disabled,true);assert.equal(env.elements['session-prompt'].value,'');
+ assert.equal(env.elements['session-results'].children.length,1);assert.match(env.elements['session-results'].children[0].textContent,/没有匹配/);
+});
+
+test('notification callbacks preserve profile/ID and ignore notices from another profile',async()=>{
+ const s={sessionId:'a',title:'A',workspace:'w',running:false,archived:false};
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {profile:'p',sessions:[s]};
+  if(command==='session_query'&&args.request.action==='open')return {opened:true};
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ env.listeners['session-notice']({payload:{profile:'other',sessionId:'a',title:'Other',kind:'等待回答'}});assert.equal(env.elements['session-notices'].children.length,0);
+ env.listeners['session-notice']({payload:{profile:'p',sessionId:'a',title:'CODEX <script>',kind:'等待回答'}});assert.equal(env.elements['session-notices'].children.length,1);
+ assert.match(env.elements['session-notices'].children[0].textContent,/编程助手 <script>/);
+ await env.elements['session-notices'].children[0].events.click();
+ const call=env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='open');assert.equal(call.args.request.sessionId,'a');assert.equal(call.args.expectedProfile,'p');
+ env.listeners['session-notice-click']({payload:{profile:'p',sessionId:'a',kind:'等待回答'}});await env.settle();assert.equal(env.calls.filter(c=>c.command==='session_query'&&c.args.request.action==='open').length,2);
+ env.listeners['session-watch-stopped']({payload:'连接已断开'});assert.equal(env.elements['session-watch-status'].textContent,'已停止');assert.match(env.elements['session-notification-feedback'].textContent,/连接已断开/);
 });

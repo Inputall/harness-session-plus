@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod session_center;
 mod theme_keeper;
 
 use hsp_core::{
@@ -73,6 +74,9 @@ struct Desktop {
     injection_owner: Mutex<Option<Options>>,
     skin_owner: Mutex<Option<Options>>,
     recycle_cancel: Mutex<Option<CancellationToken>>,
+    session_cancel: Mutex<Option<CancellationToken>>,
+    #[cfg(windows)]
+    session_toasts: Mutex<Vec<windows::UI::Notifications::ToastNotification>>,
     root: PathBuf,
 }
 #[derive(Debug, Clone, Serialize)]
@@ -851,6 +855,9 @@ fn main() {
                 injection_owner: Mutex::new(None),
                 skin_owner: Mutex::new(None),
                 recycle_cancel: Mutex::new(None),
+                session_cancel: Mutex::new(None),
+                #[cfg(windows)]
+                session_toasts: Mutex::new(Vec::new()),
                 root,
             });
             let state = app.state::<Desktop>();
@@ -902,6 +909,10 @@ fn main() {
             save_settings,
             discover_targets,
             desktop_action,
+            session_center::session_query,
+            session_center::session_watch,
+            session_center::session_export,
+            session_center::session_notification_test,
             install_recycle,
             refresh_trash,
             restore_sessions,
