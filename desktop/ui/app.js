@@ -4,7 +4,7 @@ const invoke = (command, args = {}) => {
   if (!window.__TAURI__?.core?.invoke) return Promise.reject({message:"请通过桌面程序打开此界面。"});
   return window.__TAURI__.core.invoke(command, args);
 };
-const state = {settings:null, busy:false, connected:false, installed:null, autoTimer:null, failures:0, toastTimer:null, records:[], selected:new Set()};
+const state = {settings:null, busy:false, connected:false, installed:null, autoTimer:null, failures:0, toastTimer:null, records:[], selected:new Set(), recyclePreference:false, restoringRecycle:false};
 const titles = {overview:"概览",sessions:"会话中心",trash:"会话回收站",connection:"连接与增强",capabilities:"能力探测",skins:"皮肤中心",settings:"设置"};
 const actionNames = {diagnose:"连接检查",inject_test:"测试注入",remove_injection:"卸载增强",probe_capabilities:"只读能力探测"};
 function navigate(page) {
@@ -153,7 +153,7 @@ $("check-delete").addEventListener('click',async()=>{
     log('已完成删除能力只读检查，未执行删除');
   }catch(e){toast(e.message||'删除能力检查失败',true);}finally{busy(false);}
 });
-$("install-recycle").addEventListener('click',async()=>{if(state.busy)return;busy(true);try{const value=await invoke('install_recycle');renderTrash(value.records);injection(value.injection);status(true,'当前 Harness 版本和 profile 已核实。');$("recycle-status").textContent='回收站增强已安装，请重新打开会话菜单';toast('已安装“移入回收站”菜单与侧栏入口。');log('原生回收站增强已安装');}catch(e){toast(e.message||'回收站增强安装失败',true);}finally{busy(false);}});
+$("install-recycle").addEventListener('click',async()=>{if(state.busy)return;busy(true);try{const value=await invoke('install_recycle');state.recyclePreference=true;renderTrash(value.records);injection(value.injection);status(true,'当前 Harness 版本和 profile 已核实。');$("recycle-status").textContent='回收站增强已安装，请重新打开会话菜单';toast('已安装“移入回收站”菜单与侧栏入口。');log('原生回收站增强已安装');}catch(e){toast(e.message||'回收站增强安装失败',true);}finally{busy(false);}});
 function toast(message, error = false) {
   clearTimeout(state.toastTimer);
   $("toast").textContent = message; $("toast").classList.toggle("error",error); $("toast").hidden=false;
@@ -194,9 +194,28 @@ function injection(value) {
 function renderResult(action,result) {
   state.failures=0;
   status(true,"已通过本机 CDP 检查。页面刷新或连接变化后请重新核对。");
-  if(action==="diagnose") {$("browser-version").textContent=result.browser;$("diagnostic-output").textContent=JSON.stringify(result,null,2);injection(result.injection);}
+  if(action==="diagnose") {
+    $("browser-version").textContent=result.browser;$("diagnostic-output").textContent=JSON.stringify(result,null,2);injection(result.injection);
+    maybeRestoreRecycle(result.injection);
+  }
   if(action==="inject_test"||action==="remove_injection")injection(result);
   if(action==="probe_capabilities") {$("probe-output").textContent=JSON.stringify(result,null,2);$("browser-version").textContent=result.browser;$("export-report").disabled=false;$("report-summary").textContent="结构证据已采集。此报告仅含结构证据；原生回收站在安装增强时另行核实当前实例。";}
+}
+async function maybeRestoreRecycle(value) {
+  if(!state.recyclePreference||state.restoringRecycle||state.installed===true||!state.connected)return;
+  state.restoringRecycle=true;
+  try {
+    const installed=await invoke('install_recycle');
+    renderTrash(installed.records);injection(installed.injection);
+    $("recycle-status").textContent='回收站增强已自动恢复，请重新打开会话菜单';
+    log('连接恢复后已自动恢复回收站增强');
+  } catch(error) {
+    // Avoid retrying the same failed install on every health tick. The persisted
+    // preference is kept, so a fresh connection or restart can try again.
+    state.recyclePreference=false;
+    $("recycle-status").textContent='连接已恢复，但回收站增强待手动恢复';
+    log(`回收站增强自动恢复失败：${error.message||'请手动安装增强'}`,true);
+  } finally { state.restoringRecycle=false; }
 }
 async function run(action,quiet=false) {
   if(state.busy)return;
@@ -216,7 +235,7 @@ function setSettings(settings){state.settings=settings;$("port").value=settings.
 function stopMonitor(){clearInterval(state.autoTimer);state.autoTimer=null;$("auto-check").checked=false;}
 for(const button of document.querySelectorAll("[data-page]"))button.addEventListener("click",()=>navigate(button.dataset.page));
 for(const button of document.querySelectorAll("[data-nav]"))button.addEventListener("click",()=>navigate(button.dataset.nav));
-for(const button of document.querySelectorAll("[data-action]"))button.addEventListener("click",()=>run(button.dataset.action));
+for(const button of document.querySelectorAll("[data-action]"))button.addEventListener("click",async()=>{if(button.dataset.action==='remove_injection')state.recyclePreference=false;await run(button.dataset.action);});
 $("auto-check").addEventListener("change",()=>{const requested=$("auto-check").checked;stopMonitor();if(!requested)return;if(!state.connected){toast("请先成功检查一次连接。",true);return;}$("auto-check").checked=true;state.failures=0;state.autoTimer=setInterval(()=>run("diagnose",true),15000);});
 $("disconnect").addEventListener("click",()=>{stopMonitor();toast("自动状态检查已停止；现有页面增强不受影响。");});
 $("theme-toggle").addEventListener("click",()=>{const theme=document.documentElement.dataset.theme==="dark"?"light":"dark";document.documentElement.dataset.theme=theme;$("theme").value=theme;toast("主题已切换，保存设置后下次启动继续使用。");});
@@ -239,5 +258,8 @@ $("open-recommendation").addEventListener("click",async()=>{
     await window.__TAURI__.event.listen('trash-changed',()=>{if(!state.busy)refreshTrash();});
     await window.__TAURI__.event.listen('recycle-disconnected',()=>{$("recycle-status").textContent='菜单连接已停止。重新安装增强后继续使用。';});
     await window.__TAURI__.event.listen("management-result",event=>{const {action,result,error}=event.payload;if(state.busy)return;if(error){status(false,error.message);log(`${actionNames[action]}：${error.message}`,true);toast(error.message,true);}else if(result){renderResult(action,result);log(`${actionNames[action]}成功`);}});
+    // Load the local preference after event wiring so a slow preference read cannot
+    // block cleanup handling or the first connection check.
+    invoke('recycle_restore_preference').then(value=>{state.recyclePreference=value===true;}).catch(()=>{state.recyclePreference=false;});
   }catch(error){toast(error.message||"桌面服务初始化失败",true);}
 })();

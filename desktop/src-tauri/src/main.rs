@@ -221,6 +221,7 @@ async fn perform(app: &tauri::AppHandle, action: Action) -> Result<Value, UiErro
             if let Some(cancel) = state.recycle_cancel.lock().unwrap().take() {
                 cancel.cancel();
             }
+            let _ = std::fs::remove_file(state.root.join("recycle-preference.json"));
             *state.injection_owner.lock().unwrap() = None;
         }
         if matches!(action, Action::ProbeCapabilities) {
@@ -548,6 +549,13 @@ async fn install_recycle(app: tauri::AppHandle) -> Result<Value, UiError> {
     let status =
         management::evaluate_harness(&client, recycle::INJECTION, &CancellationToken::new())
             .await?;
+    // Remember the user's explicit choice so a later connection can restore only this
+    // page enhancement. The marker never contains session data or an operation request.
+    std::fs::write(
+        state.root.join("recycle-preference.json"),
+        br#"{"enabled":true}"#,
+    )
+    .map_err(|_| UiError::new("recycle", "增强已安装，但保持配置保存失败。"))?;
     let cancel = CancellationToken::new();
     *state.recycle_cancel.lock().unwrap() = Some(cancel.clone());
     let root = state.root.clone();
@@ -616,6 +624,16 @@ async fn install_recycle(app: tauri::AppHandle) -> Result<Value, UiError> {
     Ok(
         serde_json::json!({"injection":status,"records":records,"adapter":"0.2.0-rc.2","identityVerified":true}),
     )
+}
+
+#[tauri::command]
+fn recycle_restore_preference(state: tauri::State<'_, Desktop>) -> bool {
+    let path = state.root.join("recycle-preference.json");
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|value| value["enabled"].as_bool())
+        .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -914,6 +932,7 @@ fn main() {
             session_center::session_export,
             session_center::session_notification_test,
             install_recycle,
+            recycle_restore_preference,
             refresh_trash,
             restore_sessions,
             check_permanent_delete,
