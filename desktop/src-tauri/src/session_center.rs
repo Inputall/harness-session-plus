@@ -66,6 +66,10 @@ fn foreground(pid: u32) {
 #[cfg(not(windows))]
 fn foreground(_: u32) {}
 
+pub(crate) fn foreground_for_checkpoint(pid: u32) {
+    foreground(pid);
+}
+
 #[tauri::command]
 pub fn session_export(
     content: String,

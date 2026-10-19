@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod backup;
+mod checkpoints;
 mod session_center;
 mod theme_keeper;
+mod workspace;
 
 use hsp_core::{
     cdp::Error,
@@ -77,6 +79,7 @@ struct Desktop {
     skin_owner: Mutex<Option<Options>>,
     recycle_cancel: Mutex<Option<CancellationToken>>,
     session_cancel: Mutex<Option<CancellationToken>>,
+    checkpoint_lock: Mutex<()>,
     #[cfg(windows)]
     session_toasts: Mutex<Vec<windows::UI::Notifications::ToastNotification>>,
     root: PathBuf,
@@ -898,6 +901,7 @@ fn main() {
                 skin_owner: Mutex::new(None),
                 recycle_cancel: Mutex::new(None),
                 session_cancel: Mutex::new(None),
+                checkpoint_lock: Mutex::new(()),
                 #[cfg(windows)]
                 session_toasts: Mutex::new(Vec::new()),
                 root,
@@ -955,6 +959,11 @@ fn main() {
             session_center::session_watch,
             session_center::session_export,
             session_center::session_notification_test,
+            checkpoints::checkpoint_list,
+            checkpoints::checkpoint_create,
+            checkpoints::checkpoint_restore,
+            checkpoints::checkpoint_delete,
+            workspace::workspace_git_status,
             install_recycle,
             recycle_restore_preference,
             refresh_trash,

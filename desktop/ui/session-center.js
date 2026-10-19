@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  const hub = {sessions:[], profile:null, detail:null, hits:new Map(), searchQuery:null, hasMore:false,
+  const hub = {sessions:[], profile:null, detail:null, gitSessionId:null, gitGeneration:0, checkpoints:[], hits:new Map(), searchQuery:null, hasMore:false,
     loaded:false, loading:false, generation:0, detailGeneration:0, page:0, watched:new Set(), watchBusy:false, searchInfo:''};
   const el = id => document.getElementById(`session-${id}`);
   const node = (tag, text, cls) => {const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;};
@@ -12,7 +12,40 @@
     hub.detail=null;hub.detailGeneration++;
     el('detail-title').textContent='选择一个会话';el('detail-meta').textContent='查看真实消息摘录，再生成继续任务提示词。';
     el('excerpts').replaceChildren();el('prompt').value='';el('next-task').value='';el('prompt').readOnly=true;
-    for(const id of ['open','watch-add','copy','export'])el(id).disabled=true;
+    hub.gitSessionId=null;hub.gitGeneration++;el('git-summary').textContent='选择包含 Git 仓库目录的会话后读取。';el('git-files').replaceChildren(node('p','尚未读取 Git 状态。','session-empty'));el('git-commits').textContent='—';el('git-refresh').disabled=true;
+    for(const id of ['open','watch-add','copy','export','checkpoint-save'])el(id).disabled=true;
+  }
+  function renderCheckpoints() {
+    const target=el('checkpoints');target.replaceChildren();
+    if(!hub.checkpoints.length){target.append(node('p','尚未保存检查点。','session-empty'));return;}
+    for(const checkpoint of hub.checkpoints){
+      const row=document.createElement('article');row.className='checkpoint-row';
+      const info=document.createElement('div');info.append(node('strong',sessionLabel(checkpoint.title)||'未命名会话'),node('small',`${sessionLabel(checkpoint.workspace)||'未分组'} · ${new Date(checkpoint.createdAt).toLocaleString('zh-CN')}`));
+      const actions=document.createElement('div');actions.className='button-group';
+      const restore=document.createElement('button');restore.type='button';restore.className='button small';restore.textContent='恢复检查点';restore.disabled=!hub.profile||checkpoint.profile!==hub.profile;
+      restore.addEventListener('click',async()=>{restore.disabled=true;try{const result=await invoke('checkpoint_restore',{id:checkpoint.id});el('detail-title').textContent=sessionLabel(result.title)||'未命名会话';el('detail-meta').textContent=`检查点 · ${sessionLabel(result.workspace)||'未分组'} · ${new Date(result.createdAt).toLocaleString('zh-CN')} · 已核对当前 Harness profile 和真实会话 ID`;el('prompt').value=result.prompt;el('prompt').readOnly=false;el('copy').disabled=false;el('export').disabled=false;el('open').disabled=false;hub.gitSessionId=result.sessionId;if(hub.gitSessionId)loadGit(hub.gitSessionId);toast('已打开原会话并载入检查点提示词；核对内容后点击“复制提示词”，再手动发送。');}catch(e){toast(message(e),true);}finally{restore.disabled=false;}});
+      if(restore.disabled)info.append(node('small','切换到保存此检查点的 Harness profile 后才能恢复。','subtle'));
+      const remove=document.createElement('button');remove.type='button';remove.className='button small';remove.textContent='删除';
+      remove.addEventListener('click',async()=>{if(!window.confirm('删除这条本机检查点？操作不可撤销，不会影响 Harness 会话。'))return;remove.disabled=true;try{await invoke('checkpoint_delete',{id:checkpoint.id});await loadCheckpoints();toast('检查点已删除。');}catch(e){toast(message(e),true);remove.disabled=false;}});
+      actions.append(restore,remove);row.append(info,actions);target.append(row);
+    }
+  }
+  async function loadCheckpoints(){
+    try{hub.checkpoints=await invoke('checkpoint_list');renderCheckpoints();}
+    catch(e){hub.checkpoints=[];renderCheckpoints();error(message(e));}
+  }
+  function renderGit(value){
+    el('git-summary').textContent=`${value.clean?'工作区干净':'有未提交改动'} · 分支 ${value.branch} · ${value.cwd}`;
+    el('git-files').replaceChildren();
+    if(!value.files.length)el('git-files').append(node('p','当前没有未提交文件。','session-empty'));
+    for(const file of value.files){const row=document.createElement('div');row.className='git-file-row';row.append(node('strong',file.status),node('span',file.path));el('git-files').append(row);}
+    el('git-commits').textContent=value.commits.length?value.commits.join('\n'):'没有可显示的提交。';
+  }
+  async function loadGit(sessionId=hub.gitSessionId){
+    if(!sessionId||!hub.profile)return;hub.gitSessionId=sessionId;const generation=++hub.gitGeneration;el('git-refresh').disabled=true;el('git-summary').textContent='正在读取 Git 只读状态…';
+    try{const value=await invoke('workspace_git_status',{sessionId,expectedProfile:hub.profile});if(generation===hub.gitGeneration)renderGit(value);}
+    catch(e){if(generation===hub.gitGeneration){el('git-summary').textContent=message(e);el('git-files').replaceChildren(node('p','Git 状态不可用；本工具未执行任何写操作。','session-empty'));el('git-commits').textContent='—';}}
+    finally{if(generation===hub.gitGeneration)el('git-refresh').disabled=!hub.gitSessionId;}
   }
   function render() {
     const text=el('search').value.trim().toLocaleLowerCase();
@@ -41,8 +74,9 @@
   }
   function accept(snapshot) {
     status(true,'已通过会话中心读取当前 Harness 实例。');
-    if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();renderWatched();clearDetail();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
+      if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();renderWatched();clearDetail();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
     hub.profile=snapshot.profile;hub.sessions=snapshot.sessions.filter(s=>s.origin!=='subagent');hub.loaded=true;
+      renderCheckpoints();
     const selected=el('workspace').value;
     el('workspace').replaceChildren(new Option('全部工作区',''));
     for(const name of [...new Set(hub.sessions.map(s=>s.workspace).filter(Boolean))].sort())el('workspace').add(new Option(sessionLabel(name),name));
@@ -77,8 +111,9 @@
       }
       if(!detail.messages.length)el('excerpts').append(node('p','该页没有可显示的文本消息；图片、工具输出和推理内容不在摘录范围内。'));
       if(detail.lastTurn)el('excerpts').append(node('small',`最近轮次结束原因（原生值）：${detail.lastTurn.reason}`,'subtle'));
-      el('prompt').readOnly=false;compose();el('copy').disabled=false;el('export').disabled=false;
+      el('prompt').readOnly=false;compose();el('copy').disabled=false;el('export').disabled=false;el('checkpoint-save').disabled=detail.session.archived;
       el('open').disabled=detail.session.archived;el('watch-add').disabled=detail.session.archived||hub.watchBusy;
+      hub.gitSessionId=detail.session.cwd?detail.session.sessionId:null;el('git-refresh').disabled=!hub.gitSessionId;loadGit(hub.gitSessionId);
       el('watch-add').textContent=hub.watched.has(id)?'取消关注':'关注此会话';render();
     }catch(e){if(generation===hub.detailGeneration){clearDetail();error(message(e));}}
   }
@@ -114,11 +149,17 @@
   el('open').addEventListener('click',()=>{if(hub.detail)openSession(hub.detail.session.sessionId,hub.profile);});
   el('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(el('prompt').value);toast('提示词已复制。回到 Harness 后可手动粘贴发送。');}catch{el('prompt').focus();el('prompt').select();toast('剪贴板不可用，已选中文本，请按 Ctrl+C 复制。',true);}});
   el('export').addEventListener('click',async()=>{if(!hub.detail)return;el('export').disabled=true;try{const path=await invoke('session_export',{content:`# 会话上下文\n\n${el('prompt').value}\n`});toast(`已导出：${path}`);}catch(e){toast(message(e),true);}finally{el('export').disabled=!hub.detail;}});
+  el('checkpoint-save').addEventListener('click',async()=>{
+    const d=hub.detail;if(!d||!hub.profile)return;el('checkpoint-save').disabled=true;
+    try{await invoke('checkpoint_create',{input:{profile:hub.profile,sessionId:d.session.sessionId,title:d.session.title||'',workspace:d.session.workspace||'',cwd:d.session.cwd||'',prompt:el('prompt').value}});await loadCheckpoints();toast('检查点已保存到本机工具数据。');}
+    catch(e){toast(message(e),true);}finally{el('checkpoint-save').disabled=!hub.detail;}
+  });
+  el('git-refresh').addEventListener('click',()=>loadGit());
   el('watch-add').addEventListener('click',()=>{if(!hub.detail)return;const ids=new Set(hub.watched),id=hub.detail.session.sessionId;ids.has(id)?ids.delete(id):ids.add(id);return watch(ids);});
   el('watch-stop').addEventListener('click',()=>watch(new Set()));
   el('native').addEventListener('change',()=>{if(hub.watched.size)watch(hub.watched);});
   el('notification-test').addEventListener('click',async()=>{try{await invoke('session_notification_test');el('notification-feedback').textContent='已向 Windows 请求测试通知。若没有显示，请检查系统通知设置。';}catch(e){el('notification-feedback').textContent=message(e);}});
-  window.sessionCenterOpen=()=>{if(!hub.loaded&&!hub.loading)refresh();};
+  window.sessionCenterOpen=()=>{loadCheckpoints();if(!hub.loaded&&!hub.loading)refresh();};
   (async()=>{
     if(!window.__TAURI__?.event)return;
     await window.__TAURI__.event.listen('session-snapshot',e=>{if(e.payload.profile!==hub.profile)return;if(!hub.loading)accept(e.payload);});

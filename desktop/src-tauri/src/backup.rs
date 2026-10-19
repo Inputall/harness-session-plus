@@ -48,6 +48,7 @@ fn allowed(name: &str) -> bool {
             | "imported-themes.json"
             | "community-themes.json"
             | "saved-appearance.json"
+            | "session-checkpoints.json"
             | "recycle.sqlite3"
     ) || name
         .strip_prefix("community-themes/")
@@ -174,6 +175,11 @@ fn validate(files: &Files, root: &Path) -> Result<()> {
                 let s: SavedTheme = serde_json::from_value(value).map_err(|_| "保存的皮肤无效")?;
                 s.validate()?;
             }
+            "session-checkpoints.json" => {
+                let entries: Vec<crate::checkpoints::Checkpoint> =
+                    serde_json::from_value(value).map_err(|_| "会话检查点文件无效")?;
+                crate::checkpoints::validate(&entries)?;
+            }
             "imported-themes.json" | "community-themes.json" => {
                 let array = value.as_array().ok_or("主题库无效")?;
                 if array.len()
@@ -231,6 +237,7 @@ fn collect(root: &Path, records: bool, private_paths: bool) -> Result<Files> {
         "imported-themes.json",
         "community-themes.json",
         "saved-appearance.json",
+        "session-checkpoints.json",
     ] {
         if root.join(name).exists() {
             files.insert(name.into(), read_limited(&root.join(name), LIMIT)?);
@@ -768,6 +775,34 @@ mod tests {
             .unwrap();
         assert_eq!(identity, ("original-profile".into(), "session-1".into()));
         drop(db);
+    }
+    #[test]
+    fn default_archive_round_trips_user_saved_checkpoints() {
+        let source = Temp::new();
+        let target = Temp::new();
+        let checkpoint = crate::checkpoints::Checkpoint {
+            id: "cp-123-0".into(),
+            profile: "profile-a".into(),
+            session_id: "session-a".into(),
+            title: "Task".into(),
+            workspace: "Workspace".into(),
+            cwd: "D:/work".into(),
+            created_at: 123,
+            prompt: "continue task".into(),
+        };
+        fs::write(
+            source.0.join("session-checkpoints.json"),
+            serde_json::to_vec(&vec![checkpoint.clone()]).unwrap(),
+        )
+        .unwrap();
+        let files = collect(&source.0, false, false).unwrap();
+        assert!(files.contains_key("session-checkpoints.json"));
+        let (_, restored) = unpack(&pack(&files).unwrap(), &target.0).unwrap();
+        let entries: Vec<crate::checkpoints::Checkpoint> =
+            serde_json::from_slice(&restored["session-checkpoints.json"]).unwrap();
+        assert_eq!(entries, vec![checkpoint]);
+        assert!(!restored.contains_key("session.json"));
+        assert!(!restored.contains_key("project-files.zip"));
     }
     #[test]
     fn restore_keeps_unlisted_records_and_disables_automatic_enhancement() {

@@ -183,6 +183,50 @@ test('session center searches body, copies bounded context, exports and navigate
  assert.equal(env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='open').args.expectedProfile,'profile-a');
  await env.fire('session-watch-add');assert.match(env.elements['session-watch-status'].textContent,/1/);await env.fire('session-watch-stop');assert.equal(env.elements['session-watch-status'].textContent,'已停止');
 });
+test('session checkpoints persist locally, require the saved profile, and restore through the exact session ID',async()=>{
+ const session={sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',running:false,archived:false};
+ const saved={id:'cp-1-0',profile:'profile-a',sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',createdAt:1,prompt:'continue this verified task'};
+ let checkpoints=[];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[session],profile:'profile-a'};
+  if(command==='session_query'&&args.request.action==='detail')return {session,messages:[{seq:2,role:'assistant',text:'last verified result'}],throughSeq:2,profile:'profile-a'};
+  if(command==='checkpoint_list')return checkpoints;
+  if(command==='checkpoint_create'){assert.equal(args.input.sessionId,'real-id-1');assert.equal(args.input.profile,'profile-a');checkpoints=[saved];return saved;}
+  if(command==='checkpoint_restore'){assert.equal(args.id,'cp-1-0');return saved;}
+  if(command==='checkpoint_delete'){checkpoints=[];return null;}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();
+ env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ await env.elements['session-results'].children[0].events.click();
+ await env.fire('session-checkpoint-save');
+ assert.equal(env.calls.find(c=>c.command==='checkpoint_create').args.input.profile,'profile-a');
+ assert.equal(env.elements['session-checkpoints'].children.length,1);
+ const actions=env.elements['session-checkpoints'].children[0].children[1].children;
+ assert.equal(actions[0].disabled,false);await actions[0].events.click();
+ assert.equal(env.elements['session-prompt'].value,'continue this verified task');
+ assert.match(env.elements['session-detail-meta'].textContent,/已核对当前 Harness profile/);
+ assert.equal(env.elements['session-copy'].disabled,false);
+ const stale={...saved,profile:'other-profile'};checkpoints=[stale];
+ env.nav.find(n=>n.dataset.page==='overview').events.click();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ assert.equal(env.elements['session-checkpoints'].children[0].children[1].children[0].disabled,true);
+});
+test('Git workspace panel is read-only and ignores stale results after switching sessions',async()=>{
+ const first={sessionId:'a',title:'A',workspace:'w',cwd:'D:/repo-a',running:false,archived:false};
+ const second={sessionId:'b',title:'B',workspace:'w',cwd:'D:/repo-b',running:false,archived:false};
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[first,second],profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:args.request.sessionId==='a'?first:second,messages:[],throughSeq:1,profile:'p'};
+  if(command==='workspace_git_status'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {cwd:'D:/repo-a',branch:'main',clean:false,files:[{status:'工作区修改',path:'src/main.rs'}],commits:['abc123\t2026-10-19\tread-only']};}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();await env.settle();
+ assert.match(env.elements['session-git-summary'].textContent,/D:\/repo-a/);assert.match(env.elements['session-git-files'].children[0].children[1].textContent,/src\/main\.rs/);
+ assert.equal(env.calls.filter(c=>c.command==='workspace_git_status').length,1);
+ assert(env.calls.every(c=>!['git_commit','git_reset','git_checkout','git_add'].includes(c.command)));
+ await env.elements['session-git-refresh'].events.click();assert.equal(env.calls.filter(c=>c.command==='workspace_git_status').length,2);
+});
 test('late detail and changed search terms cannot expose stale selection or stale hits',async()=>{
  let detailResolve;
  const s={sessionId:'a',title:'Task',workspace:'ws',running:false,archived:false};
