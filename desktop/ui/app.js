@@ -33,7 +33,7 @@ async function loadSkins(){
 function renderSkins(){
     const query=$("skin-search").value.trim().toLowerCase();
     const category=$("skin-filter").value;
-    const catalog=skinState.catalog.filter(s=>(!category||category==='all'||s.category===category||(category==='imported'&&s.id.startsWith('imported-')))&&`${s.name} ${s.author||''} ${s.description||''} ${(s.tags||[]).join(' ')}`.toLowerCase().includes(query));
+    const catalog=skinState.catalog.filter(s=>(!category||category==='all'||s.category===category||(category==='imported'&&(s.id.startsWith('imported-')||s.id==='backup-appearance')))&&`${s.name} ${s.author||''} ${s.description||''} ${(s.tags||[]).join(' ')}`.toLowerCase().includes(query));
     const pages=Math.max(1,Math.ceil(catalog.length/12));skinState.page=Math.min(skinState.page,pages-1);
     $("skin-count").textContent=`本地 ${catalog.length} 款 · 第 ${skinState.page+1} / ${pages} 页`;
     $("skin-prev").disabled=skinState.page===0;$("skin-next").disabled=skinState.page>=pages-1;

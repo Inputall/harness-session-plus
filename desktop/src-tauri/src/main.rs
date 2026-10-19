@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod backup;
 mod session_center;
 mod theme_keeper;
 
@@ -68,6 +69,7 @@ impl Settings {
     }
 }
 struct Desktop {
+    _instance_lock: std::fs::File,
     settings: Mutex<Settings>,
     gate: tokio::sync::Mutex<()>,
     report: Mutex<Option<Value>>,
@@ -249,6 +251,19 @@ fn skin_catalog() -> Value {
 
 fn all_skins(state: &Desktop) -> Result<Value, UiError> {
     let mut catalog = skin::catalog();
+    let recovered = state.root.join("saved-appearance.json");
+    if recovered.exists() {
+        let saved: theme_keeper::SavedTheme = serde_json::from_slice(
+            &std::fs::read(recovered).map_err(|_| UiError::new("theme", "恢复皮肤不可读取"))?,
+        )
+        .map_err(|_| UiError::new("theme", "恢复皮肤格式无效"))?;
+        saved.validate().map_err(|e| UiError::new("theme", &e))?;
+        let mut skin = saved.skin;
+        skin["id"] = serde_json::json!("backup-appearance");
+        skin["category"] = serde_json::json!("imported");
+        skin["name"] = serde_json::json!("备份恢复的皮肤");
+        catalog.as_array_mut().unwrap().push(skin);
+    }
     let path = state.root.join("imported-themes.json");
     if path.exists() {
         let bytes = std::fs::read(path)
@@ -856,6 +871,14 @@ fn main() {
         .setup(|app| {
             let root = app.path().app_config_dir()?;
             std::fs::create_dir_all(&root)?;
+            let instance_lock = std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(root.join("manager.lock"))?;
+            instance_lock.try_lock().map_err(|_| std::io::Error::other("管理工具已在运行，请先从托盘退出旧实例"))?;
+            let recovery = match backup::recover(&root) {
+                Ok(message) => message,
+                Err(error) if root.join("restore-journal.json").exists() => return Err(std::io::Error::other(format!("恢复回滚未完成，已停止启动以保护配置：{error}")).into()),
+                Err(error) => format!("恢复未执行：{error}。可在设置中取消待恢复任务。"),
+            };
+            std::fs::write(root.join("restore-status.json"), serde_json::to_vec(&recovery)?)?;
             let settings_path = root.join("settings.json");
             let settings = if settings_path.exists() {
                 let settings: Settings = serde_json::from_slice(&std::fs::read(settings_path)?)?;
@@ -867,6 +890,7 @@ fn main() {
                 Settings::default()
             };
             app.manage(Desktop {
+                _instance_lock: instance_lock,
                 settings: Mutex::new(settings),
                 gate: tokio::sync::Mutex::new(()),
                 report: Mutex::new(None),
@@ -938,6 +962,13 @@ fn main() {
             check_permanent_delete,
             launch_harness,
             export_report,
+            backup::backup_create,
+            backup::backup_preview,
+            backup::backup_stage,
+            backup::backup_cancel,
+            backup::backup_diagnostics,
+            backup::backup_status,
+            backup::backup_open_folder,
             quit_app,
             exit_without_cleanup,
             open_recommendation,

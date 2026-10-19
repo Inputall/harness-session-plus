@@ -1,6 +1,6 @@
 # Harness Session Plus 桌面版
 
-当前版本 **0.5.3**，Windows Tauri 2 桌面程序。Rust 宿主与静态 HTML/CSS/JavaScript 前端，已完成 release 构建，当前提供独立 EXE，没有安装包或代码签名。
+当前源码版本 **0.8.0**，Windows Tauri 2 桌面程序。Rust 宿主与静态 HTML/CSS/JavaScript 前端，提供独立 EXE，没有安装包或代码签名。
 
 完整功能、兼容性、调试参数和故障排查见[项目 README](../README.md)。
 
@@ -26,6 +26,8 @@ cargo build --manifest-path desktop/src-tauri/Cargo.toml --release --locked
 
 ## 功能和边界
 
+- 设置页“安全备份与迁移”：导出工具配置与主题，可选回收站管理记录及本机连接路径；恢复前校验清单与 SHA256、显示覆盖预览，并在下次启动时自动备份与恢复。失败或中断后回滚，回滚不完整时停止启动。详见[备份说明](../docs/backup-migration.md)。
+- 脱敏诊断导出及备份目录入口；工具数据迁移不包含 Harness 会话正文和项目文件。
 - 概览、连接诊断、增强卸载、主动启动 Harness。
 - 按当前 profile 隔离的 SQLite 回收站与操作日志。
 - 真实 ID 核验，运行或未知状态拒绝操作；结果不明时不自动重放。
@@ -63,6 +65,6 @@ cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --locked --all-targets
 node --test fixtures/desktop-ui.test.cjs fixtures/skin.test.cjs fixtures/injection.test.cjs fixtures/recycle-menu.test.cjs
 ```
 
-截至 2026-10-14，桌面 0.5.3 release 构建、Clippy 和前端测试通过；前端测试是 DOM/IPC 模拟测试。真实 Harness 专用同名会话归档与恢复闭环已通过。主题守护已验证管理工具退出后的主题保持及覆盖丢失恢复，但没有重启用户正在使用的 Harness，完整退出重启流程尚未实测。直接在浏览器打开 HTML 不能使用桌面功能。
+0.8.0 release 构建、Clippy 与测试通过；前端测试是 DOM/IPC 模拟测试。真实 Harness 专用同名会话归档与恢复闭环已通过。主题守护已验证管理工具退出后的主题保持及覆盖丢失恢复，但完整退出并重启 Harness 的流程尚未实测。备份恢复使用合成数据测试，尚未对真实用户配置执行恢复。直接在浏览器打开 HTML 不能使用桌面功能。
 
 主题只转换配色与图片，不执行包内 CSS 或脚本；ZIP 需先解压。作者及许可见[素材说明](ui/themes/README.md)，真实配色与壁纸验收见[皮肤验证](../docs/skin-validation.md)。

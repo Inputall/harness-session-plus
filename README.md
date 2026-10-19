@@ -2,14 +2,14 @@
 
 为 Windows 版 DeepSeek Harness 提供会话搜索、上下文恢复、关注提醒、会话回收站和皮肤中心的独立桌面工具。通过本机 Chrome DevTools Protocol（CDP）连接，使用已验证的原生只读查询及归档与恢复机制。
 
-当前桌面版本：**0.7.0**。采用 Rust + Tauri 2，前端使用 HTML/CSS/JavaScript，没有 Node 后端或 Electron 宿主，不修改 Harness 安装包。
+当前源码版本：**0.8.0**。采用 Rust + Tauri 2，前端使用 HTML/CSS/JavaScript，没有 Node 后端或 Electron 宿主，不修改 Harness 安装包。
 
 > “移入回收站”是可恢复的原生归档。**永久删除尚未实现，按钮保持禁用**；“检查删除能力”只读取状态，不删除文件或会话。
 
 ## 下载 Windows 桌面版
 
-- [直接下载 0.7.0 可执行文件（Windows x64）](https://github.com/Inputall/harness-session-plus/releases/download/v0.7.0/hsp-desktop.exe)
-- [版本说明与 SHA256 校验文件](https://github.com/Inputall/harness-session-plus/releases/tag/v0.7.0)
+- [直接下载 0.8.0 可执行文件（Windows x64）](https://github.com/Inputall/harness-session-plus/releases/download/v0.8.0/hsp-desktop.exe)
+- [版本说明与 SHA256 校验文件](https://github.com/Inputall/harness-session-plus/releases/tag/v0.8.0)
 
 下载 `hsp-desktop.exe` 后直接运行，无需安装 Rust、Node 或编译源代码；运行环境需要 Windows 和 WebView2 Runtime。当前为未签名的便携 EXE，没有 MSI/NSIS 安装包。更新时先从托盘完全退出旧管理工具，再运行新版；Harness 的本机调试连接要求仍适用。
 
@@ -39,6 +39,8 @@
 | 官网推荐卡片 | 概览页显示 CoderPlant · 码源，点击后用默认浏览器打开官网 |
 | Harness 皮肤中心 | 四套配色 + 40 款转换主题、背景清晰度调节、社区按需安装及恢复默认 |
 | 主题保持 | 管理工具退出后由独立守护进程按已保存配置恢复页面主题 |
+| 安全备份与迁移 | 设置页导出工具配置和主题，回收站管理记录及本机连接路径可选；带 SHA256 校验、恢复预览、启动时恢复及中断回滚 |
+| 脱敏诊断 | 导出工具版本与状态布尔摘要，不含正文、标题、路径、profile、令牌或原始日志 |
 | 结构探测、删除能力检查 | 只读，不执行删除 |
 | 永久删除、自动清空 | 未实现 |
 
@@ -186,6 +188,16 @@ Invoke-RestMethod http://127.0.0.1:9223/json/list
 
 适配与验收详情：[会话中心验证](docs/session-center-validation.md)。
 
+## 安全备份与迁移（0.8.0）
+
+在“设置 → 安全备份与迁移”点击“创建备份”。ZIP 与 SHA256 文件保存在工具数据目录的 `backups/`，可直接点击“打开备份目录”。默认包含连接配置、手动导入及已安装的社区主题、当前皮肤副本；默认排除本机连接路径和回收站管理记录，后两项可主动勾选。备份未加密，主题包的作者及许可信息也会保留。
+
+恢复时先选择 ZIP、点击“校验并预览”，核对每个新增或覆盖文件，再勾选确认并安排下次启动恢复。需要先卸载页面增强、恢复 Harness 默认皮肤；从托盘完全退出管理工具，再打开新版。可在重启前取消任务。恢复前会自动备份现有工具数据，替换失败或中断后按事务日志回滚；回滚未完成时停止启动。恢复时关闭自动回收站增强偏好，皮肤只加入可选主题，需手动应用；连接页面 ID 会清除。
+
+**这是本工具的数据备份，不包含 Harness 会话正文、附件或项目文件，不能用于找回已丢失的 Harness 会话。** 回收站记录包含标题、工作区及 profile 标识，恢复后仍按原 profile 隔离，不会映射到其他实例。不在清单中的文件保留，不恢复关注清单或后台任务。当前只接受相同工具版本的备份，ZIP 最大 64 MiB、解压总量最大 192 MiB。SHA256 检查完整性，不证明来源可信。
+
+“导出脱敏诊断”无需连接 Harness，只生成工具版本、平台与状态布尔摘要；适合反馈配置文件是否存在、是否登记后台任务等问题，不代表实时连接测试。完整范围及恢复排查见[备份与迁移说明](docs/backup-migration.md)。
+
 ## CLI
 
 CLI 用于诊断及测试注入；真实回收站操作由桌面工具完成：
@@ -229,10 +241,12 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
 cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings
-node --test fixtures/injection.test.cjs fixtures/recycle-menu.test.cjs fixtures/desktop-ui.test.cjs fixtures/skin.test.cjs fixtures/session-center.test.cjs
+node --test fixtures/*.test.cjs
 ```
 
-Node 仅用于开发脚本和 JS 模拟测试，不是产品运行依赖。截至 2026-10-14，桌面 0.5.3 release 构建成功；workspace/core 与桌面合计 18 项 Rust 测试、25 项 JS 测试通过，core/desktop Clippy 零警告。主题守护的真实 Harness 验收细节和限制见[主题保持说明](docs/persistent-themes.md)。
+Node 仅用于开发脚本和 JS 模拟测试，不是产品运行依赖。0.8.0 release 构建成功；workspace/core 与桌面合计 28 项 Rust 测试、35 项 JS 测试通过，core/desktop Clippy 零警告。主题守护的真实 Harness 验收细节和限制见[主题保持说明](docs/persistent-themes.md)。
+
+2026-10-19，0.8.0 本地 release 构建成功，workspace 与桌面合计 28 项 Rust 测试、35 项 JS 测试通过，桌面 Clippy 零警告。本次备份恢复测试全部使用临时合成数据；尚未执行真实用户配置恢复或完整桌面交互验收，详见[备份与迁移说明](docs/backup-migration.md)。
 
 2026-10-16 新增 0.7.0 连接恢复助手：保存用户主动启用的回收站增强偏好，管理工具或 Harness 重启后连接检查会重新核验并恢复缺失菜单；自动恢复不重放会话数据操作。会话中心的 Rust、JS 与真实本机验证记录继续见[会话中心验证](docs/session-center-validation.md)。
 
@@ -259,6 +273,7 @@ DEVELOPMENT_PLAN.md   原始分阶段开发方案
 
 | 桌面版本 | 主要变化 |
 | --- | --- |
+| 0.8.0 | 新增工具数据备份与迁移：SQLite 在线快照、清单与 SHA256 校验、恢复预览、恢复前备份与中断回滚、脱敏诊断及管理窗口实例锁 |
 | 0.7.0 | 新增连接恢复助手：按本机偏好自动恢复回收站菜单增强；补充连接、增强和会话数据操作边界说明 |
 | 0.6.0 | 新增会话中心：原生正文搜索与索引关闭时的只读回退、真实消息摘录、继续任务提示词、复制/导出、后台关注、Windows 通知和按 ID 返回会话 |
 | 0.5.3 | 应用主题及清晰度写入本机配置；新增独立主题守护，管理工具退出后仍可恢复页面覆盖，并在显式恢复默认时停止守护 |

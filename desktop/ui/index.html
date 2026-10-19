@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN" data-theme="dark">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Harness Session Plus</title><link rel="stylesheet" href="styles.css"><script defer src="app.js"></script><script defer src="session-center.js"></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Harness Session Plus</title><link rel="stylesheet" href="styles.css"><script defer src="app.js"></script><script defer src="session-center.js"></script><script defer src="backup.js"></script></head>
 <body>
 <svg class="svg-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
 <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
@@ -29,7 +29,7 @@
     <button class="nav-item" data-page="skins"><svg><use href="#i-moon"/></svg>皮肤中心<span class="nav-tag">新</span></button>
     <button class="nav-item" data-page="settings"><svg><use href="#i-settings"/></svg>设置</button>
   </nav>
-  <div class="sidebar-bottom"><div class="local-badge"><span class="dot"></span>本机运行 · 独立管理</div><div class="version">Harness Session Plus <span>v0.6.0</span></div></div>
+  <div class="sidebar-bottom"><div class="local-badge"><span class="dot"></span>本机运行 · 独立管理</div><div class="version">Harness Session Plus <span>v0.8.0</span></div></div>
 </aside>
 <main>
   <header class="topbar"><div class="breadcrumb">管理中心 <span>/</span> <strong id="crumb">概览</strong></div><div class="top-actions"><span class="status-pill" id="global-status"><span class="dot"></span>尚未检查</span><button class="icon-button" id="theme-toggle" title="切换明暗主题" aria-label="切换明暗主题"><svg><use href="#i-moon"/></svg></button></div></header>
@@ -88,6 +88,17 @@
   <section class="page" id="page-settings" hidden>
     <div class="page-heading"><div><div class="eyebrow">PREFERENCES</div><h1>设置</h1><p>配置保存在本工具的应用目录中。</p></div></div>
     <form id="settings-form"><article class="panel"><div class="panel-heading"><h3>连接配置</h3><span class="subtle">仅本机</span></div><div class="form-body"><label class="field"><span>CDP 调试端口</span><input id="port" type="number" min="1" max="65535" required><small>默认 9223。保存后刷新页面列表。</small></label><div class="field"><label for="target">目标页面</label><div class="input-row"><select id="target"><option value="">仅有一个匹配页面时自动选择</option></select><button type="button" class="button" id="refresh-targets">刷新列表</button></div><small>存在多个匹配页面时，必须明确选择；不默认连接首个。</small></div><label class="field"><span>Harness 可执行文件</span><input id="executable" placeholder="C:\…\DeepSeek Harness.exe"><small>只在点击“启动 Harness”时使用；不自动重启或终止进程。</small></label></div></article><article class="panel spacing"><div class="panel-heading"><h3>外观与窗口</h3></div><div class="form-body"><label class="field"><span>界面主题</span><select id="theme"><option value="dark">深色 · 蓝黑</option><option value="light">浅色 · 冷白</option></select></label><p class="settings-note">关闭窗口后保留在系统托盘。退出工具会尝试卸载本工具安装的测试增强，Harness 保持运行。</p></div></article><div class="form-actions"><span class="subtle">不会启用开机启动、遥测或后台清理</span><button class="button primary" type="submit">保存设置</button></div></form>
+    <article class="panel spacing"><div class="panel-heading"><h3>安全备份与迁移</h3><span class="badge">工具数据</span></div><div class="form-body">
+      <p class="settings-note">保存连接设置、导入及已安装主题、当前皮肤。备份不含 Harness 会话正文或项目文件，不能代替 Harness 数据备份。ZIP 未加密，请妥善保管。</p>
+      <label class="checkbox-label"><input type="checkbox" id="backup-records">包含回收站管理记录（含会话标题、工作区及 profile 标识）</label>
+      <label class="checkbox-label"><input type="checkbox" id="backup-paths">保留本机连接路径（跨电脑恢复时请重新核对）</label>
+      <div class="button-group"><button class="button primary" id="backup-create">创建备份</button><button class="button" id="backup-diagnostics">导出脱敏诊断</button><button class="button" id="backup-folder">打开备份目录</button></div>
+      <label class="field"><span>从本工具备份恢复</span><input id="backup-file" type="file" accept=".zip,application/zip"><small>仅接受当前版本生成的备份，最大 64 MiB。先预览清单，再确认安排恢复。</small></label>
+      <button class="button" id="backup-preview">校验并预览</button>
+      <div id="backup-details" hidden><p id="backup-summary"></p><ul id="backup-files"></ul><p id="backup-warning" class="settings-note"></p><label class="checkbox-label"><input type="checkbox" id="backup-ack">我确认覆盖清单内的工具数据，并已核对备份来源。恢复的皮肤需要手动应用。</label></div>
+      <div class="button-group"><button class="button danger" id="backup-stage" disabled>安排下次启动恢复</button><button class="button" id="backup-cancel" disabled>取消待恢复任务</button></div>
+      <p id="backup-result" role="status" aria-live="polite">备份保存于工具数据目录的 backups 文件夹。恢复前会自动另存现有工具数据。</p>
+    </div></article>
     <button class="button spacing" id="quit"><svg><use href="#i-power"/></svg>退出工具</button>
   </section>
   <footer class="footer"><span>本地管理，独立运行</span><span>原生归档与恢复 · 永久删除未启用</span></footer>
