@@ -51,6 +51,7 @@ fn allowed(name: &str) -> bool {
             | "session-checkpoints.json"
             | "session-favorites.json"
             | "session-tags.json"
+            | "prompt-templates.json"
             | "recycle.sqlite3"
     ) || name
         .strip_prefix("community-themes/")
@@ -192,6 +193,11 @@ fn validate(files: &Files, root: &Path) -> Result<()> {
                     serde_json::from_value(value).map_err(|_| "会话标签文件无效")?;
                 crate::session_tags::validate(&entries)?;
             }
+            "prompt-templates.json" => {
+                let entries: Vec<crate::prompt_templates::PromptTemplate> =
+                    serde_json::from_value(value).map_err(|_| "提示词模板文件无效")?;
+                crate::prompt_templates::validate(&entries)?;
+            }
             "imported-themes.json" | "community-themes.json" => {
                 let array = value.as_array().ok_or("主题库无效")?;
                 if array.len()
@@ -252,6 +258,7 @@ fn collect(root: &Path, records: bool, private_paths: bool) -> Result<Files> {
         "session-checkpoints.json",
         "session-favorites.json",
         "session-tags.json",
+        "prompt-templates.json",
     ] {
         if root.join(name).exists() {
             files.insert(name.into(), read_limited(&root.join(name), LIMIT)?);
@@ -863,6 +870,45 @@ mod tests {
         let entries: Vec<crate::session_tags::SessionTags> =
             serde_json::from_slice(&restored["session-tags.json"]).unwrap();
         assert_eq!(entries, vec![tags]);
+    }
+    #[test]
+    fn default_archive_round_trips_prompt_templates() {
+        let source = Temp::new();
+        let target = Temp::new();
+        let template = crate::prompt_templates::PromptTemplate {
+            id: "template-1".into(),
+            name: "Review changes".into(),
+            category: "Review".into(),
+            content: "Inspect the diff and run focused tests.".into(),
+            updated_at: 123,
+        };
+        fs::write(
+            source.0.join("prompt-templates.json"),
+            serde_json::to_vec(&vec![template.clone()]).unwrap(),
+        )
+        .unwrap();
+        let files = collect(&source.0, false, false).unwrap();
+        assert!(files.contains_key("prompt-templates.json"));
+        let (_, restored) = unpack(&pack(&files).unwrap(), &target.0).unwrap();
+        let entries: Vec<crate::prompt_templates::PromptTemplate> =
+            serde_json::from_slice(&restored["prompt-templates.json"]).unwrap();
+        assert_eq!(entries, vec![template]);
+    }
+    #[test]
+    fn invalid_prompt_template_backup_is_rejected() {
+        let root = Temp::new();
+        let invalid = crate::prompt_templates::PromptTemplate {
+            id: "invalid id".into(),
+            name: "Template".into(),
+            category: String::new(),
+            content: "Prompt".into(),
+            updated_at: 1,
+        };
+        let files = Files::from([(
+            "prompt-templates.json".into(),
+            serde_json::to_vec(&vec![invalid]).unwrap(),
+        )]);
+        assert!(validate(&files, &root.0).is_err());
     }
     #[test]
     fn restore_keeps_unlisted_records_and_disables_automatic_enhancement() {

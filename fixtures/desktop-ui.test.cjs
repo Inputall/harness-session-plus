@@ -180,6 +180,34 @@ test('Ctrl+K opens a searchable session switcher and selects by real session ID'
  assert.equal(env.elements['session-switcher-dialog'].open,false);assert.equal(env.elements['session-detail-title'].textContent,'Beta task');
  const detail=env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='detail');assert.equal(detail.args.request.sessionId,'real-b');assert.equal(detail.args.expectedProfile,'p');
 });
+test('prompt templates save locally, filter, insert without sending, and delete by template ID',async()=>{
+ const session={sessionId:'session-1',title:'Current task',workspace:'Project',running:false,archived:false};
+ const templates=[];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[session],profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session,messages:[],throughSeq:1,projectionState:'sequenced',profile:'p'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs')return {jobs:[]};
+  if(command==='favorite_list'||command==='session_tags_list'||command==='checkpoint_list')return [];
+  if(command==='prompt_template_list')return templates;
+  if(command==='prompt_template_save'){const saved={...args.template,id:args.template.id||'template-1',updatedAt:123};templates.splice(0,templates.length,saved);return saved;}
+  if(command==='prompt_template_delete'){const i=templates.findIndex(item=>item.id===args.id);if(i>=0)templates.splice(i,1);return null;}
+  if(command==='workspace_git_status')return {clean:true,branch:'main',cwd:'D:/workspace',files:[],commits:[]};
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);env.context.window.sessionCenterOpen();await env.settle();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();await env.settle();
+ await env.fire('session-template-new');env.elements['session-template-name'].value='Review';env.elements['session-template-category'].value='Quality';env.elements['session-template-content'].value='Inspect the diff and run focused tests.';
+ let prevented=false;await env.elements['session-template-form'].events.submit({preventDefault(){prevented=true;}});await env.settle();
+ assert.equal(prevented,true);assert.equal(env.elements['session-template-dialog'].open,false);assert.equal(templates.length,1);
+ env.elements['session-template-search'].value='quality';await env.fire('session-template-search','input');
+ const row=env.elements['session-templates'].children[0];assert.equal(row.children[0].children[0].textContent,'Review');
+ await row.children[1].children[0].events.click();
+ assert.equal(env.elements['session-next-task'].value,'Inspect the diff and run focused tests.');assert.match(env.elements['session-prompt'].value,/本次请求：Inspect the diff and run focused tests\./);
+ assert.equal(env.calls.some(c=>c.command==='session_query'&&c.args.request.action==='send'),false);
+ await row.children[1].children[2].events.click();await env.settle();assert.equal(templates.length,0);
+ assert.ok(env.calls.some(c=>c.command==='prompt_template_delete'&&c.args.id==='template-1'));
+});
 test('session favorites are profile-scoped, filter by identity, and stay local',async()=>{
  const first={sessionId:'a',title:'Pinned task',workspace:'ws',running:false,archived:false};
  const second={sessionId:'b',title:'Other task',workspace:'ws',running:false,archived:false};

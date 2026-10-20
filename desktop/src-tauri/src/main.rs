@@ -2,6 +2,7 @@
 mod backup;
 mod checkpoints;
 mod favorites;
+mod prompt_templates;
 mod session_center;
 mod session_tags;
 mod theme_keeper;
@@ -84,6 +85,7 @@ struct Desktop {
     checkpoint_lock: Mutex<()>,
     favorites_lock: Mutex<()>,
     session_tags_lock: Mutex<()>,
+    prompt_templates_lock: Mutex<()>,
     #[cfg(windows)]
     session_toasts: Mutex<Vec<windows::UI::Notifications::ToastNotification>>,
     root: PathBuf,
@@ -908,6 +910,7 @@ fn main() {
                 checkpoint_lock: Mutex::new(()),
                 favorites_lock: Mutex::new(()),
                 session_tags_lock: Mutex::new(()),
+                prompt_templates_lock: Mutex::new(()),
                 #[cfg(windows)]
                 session_toasts: Mutex::new(Vec::new()),
                 root,
@@ -973,6 +976,9 @@ fn main() {
             favorites::favorite_toggle,
             session_tags::session_tags_list,
             session_tags::session_tags_save,
+            prompt_templates::prompt_template_list,
+            prompt_templates::prompt_template_save,
+            prompt_templates::prompt_template_delete,
             workspace::workspace_git_status,
             install_recycle,
             recycle_restore_preference,

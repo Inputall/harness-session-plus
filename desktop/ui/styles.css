@@ -28,6 +28,13 @@
 .session-switcher-option:hover,.session-switcher-option:focus-visible{background:var(--raised);border-color:var(--brand)}
 .session-switcher-option strong,.session-switcher-option small{display:block;overflow-wrap:anywhere}.session-switcher-option small{color:var(--muted);margin-top:3px}
 .session-switcher-dialog>p{padding:2px 18px 14px}
+.session-prompt-library{margin:18px 0 8px;padding:12px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.session-template-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}.session-template-heading h3{font-size:13px}
+.session-prompt-library>p{margin:5px 0 10px}.session-prompt-library>input,.session-template-dialog input,.session-template-dialog textarea{width:100%;min-width:0;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit}
+.session-templates{display:grid;gap:6px;max-height:300px;overflow:auto;margin-top:9px}
+.session-template-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;align-items:center;padding:9px;border:1px solid var(--line);border-radius:7px;background:var(--bg);min-width:0}
+.session-template-row>div:first-child{min-width:0}.session-template-row strong,.session-template-row small{display:block;overflow-wrap:anywhere}.session-template-row small{color:var(--muted);margin-top:3px}.session-template-row p{grid-column:1/-1;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted);font-size:11px;max-height:54px;overflow:auto}
+.session-template-row .button-group{gap:5px}.session-template-dialog{width:min(560px,calc(100vw - 32px));max-width:none;padding:18px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);box-shadow:0 20px 70px #0008}.session-template-dialog::backdrop{background:#060810a8;backdrop-filter:blur(2px)}.session-template-dialog form{display:grid;gap:8px}.session-template-dialog .panel-heading{margin:-18px -18px 4px;padding:12px 18px}.session-template-dialog .panel-heading h2{font-size:15px}.session-template-dialog .session-label{margin:4px 0 0}.session-template-dialog textarea{resize:vertical;line-height:1.6}.session-template-dialog .button-group{justify-content:flex-end;margin-top:8px}
 .session-compare-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:16px}
 .session-compare-card{min-width:0;border:1px solid var(--line);border-radius:8px;padding:14px;background:var(--bg);overflow-wrap:anywhere}
 .session-compare-card h4{font-size:13px;margin:0 0 4px}.session-compare-metrics{margin:14px 0 0}

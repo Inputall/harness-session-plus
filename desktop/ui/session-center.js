@@ -1,7 +1,7 @@
 "use strict";
 (() => {
   const hub = {sessions:[], profile:null, detail:null, gitSessionId:null, gitGeneration:0, checkpoints:[], favorites:new Set(), tags:new Map(), hits:new Map(), searchQuery:null, hasMore:false,
-    loaded:false, loading:false, generation:0, detailGeneration:0, page:0, watched:new Set(), watchBusy:false, searchInfo:'',compareMode:false,compareIds:new Set(),compareGeneration:0,batchMode:false,batchIds:new Set(),batchBusy:false,switcherOpen:false};
+    loaded:false, loading:false, generation:0, detailGeneration:0, page:0, watched:new Set(), watchBusy:false, searchInfo:'',compareMode:false,compareIds:new Set(),compareGeneration:0,batchMode:false,batchIds:new Set(),batchBusy:false,switcherOpen:false,templates:[],templatesLoaded:false,templateGeneration:0,editingTemplateId:''};
   const el = id => document.getElementById(`session-${id}`);
   const node = (tag, text, cls) => {const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;};
   const message = error => error?.message || String(error || '操作失败，请重新检查连接。');
@@ -20,6 +20,7 @@
     el('jobs').replaceChildren(node('p','尚未读取后台任务。','session-empty'));el('jobs-status').textContent='选择会话后读取当前后台任务名册。';el('jobs-refresh').disabled=true;
     el('plan-command').disabled=true;el('plan-command').textContent='计划状态不可用';
     for(const id of ['open','watch-add','favorite-toggle','tags-save','copy','export','checkpoint-save'])el(id).disabled=true;
+    renderTemplates();
   }
   function renderUsage(detail) {
     const target=el('usage');target.replaceChildren();
@@ -74,6 +75,45 @@
   async function loadCheckpoints(){
     try{hub.checkpoints=await invoke('checkpoint_list');renderCheckpoints();}
     catch(e){hub.checkpoints=[];renderCheckpoints();error(message(e));}
+  }
+  function renderTemplates(){
+    const target=el('templates'),term=el('template-search').value.trim().toLocaleLowerCase();target.replaceChildren();
+    const matches=hub.templates.filter(item=>`${item.name} ${item.category} ${item.content}`.toLocaleLowerCase().includes(term));
+    el('template-status').textContent=hub.templatesLoaded?`${matches.length} / ${hub.templates.length} 条模板 · 本机保存`:'正在读取模板…';
+    if(!matches.length){target.append(node('p',hub.templates.length?'没有匹配的模板。':'尚未创建模板。','session-empty'));return;}
+    for(const item of matches){
+      const row=document.createElement('article');row.className='session-template-row';
+      const info=document.createElement('div');info.append(node('strong',item.name),node('small',item.category||'未分类'));row.append(info);
+      const actions=document.createElement('div');actions.className='button-group';
+      const use=document.createElement('button');use.type='button';use.className='button small';use.textContent='填入下一步';use.disabled=!hub.detail;use.title=hub.detail?'填入当前会话的下一步请求':'先选择一个会话';
+      use.addEventListener('click',()=>{
+        if(!hub.detail)return;const task=el('next-task'),next=task.value?`${task.value}\n\n${item.content}`:item.content;
+        if(next.length>2000){toast('模板与现有请求合计超过 2000 个字符；已保留原内容。',true);return;}
+        task.value=next;compose();task.focus();toast('模板已填入下一步请求；检查后再复制或导出。');
+      });
+      const edit=document.createElement('button');edit.type='button';edit.className='button small';edit.textContent='编辑';edit.addEventListener('click',()=>openTemplateEditor(item));
+      const remove=document.createElement('button');remove.type='button';remove.className='button small';remove.textContent='删除';remove.addEventListener('click',async()=>{
+        if(!window.confirm(`删除本机提示词模板“${item.name}”？这不会影响 Harness 会话。`))return;remove.disabled=true;
+        try{await invoke('prompt_template_delete',{id:item.id});await loadTemplates(true);toast('提示词模板已删除。');}
+        catch(e){toast(message(e),true);remove.disabled=false;}
+      });
+      actions.append(use,edit,remove);row.append(actions,node('p',item.content));target.append(row);
+    }
+  }
+  async function loadTemplates(force=false){
+    if(hub.templatesLoaded&&!force)return;const generation=++hub.templateGeneration;el('template-status').textContent='正在读取模板…';
+    try{const values=await invoke('prompt_template_list');if(generation!==hub.templateGeneration)return;hub.templates=values;hub.templatesLoaded=true;renderTemplates();}
+    catch(e){if(generation===hub.templateGeneration){hub.templates=[];hub.templatesLoaded=false;el('template-status').textContent=`提示词库不可用：${message(e)}`;el('templates').replaceChildren(node('p','读取失败；现有模板文件未被修改。','session-empty'));}}
+  }
+  function openTemplateEditor(item=null){
+    hub.editingTemplateId=item?.id||'';el('template-dialog-title').textContent=item?'编辑提示词模板':'新建提示词模板';
+    el('template-name').value=item?.name||'';el('template-category').value=item?.category||'';el('template-content').value=item?.content||'';
+    el('template-dialog').showModal();el('template-name').focus();
+  }
+  async function saveTemplate(event){
+    event.preventDefault();const button=el('template-save');button.disabled=true;
+    try{await invoke('prompt_template_save',{template:{id:hub.editingTemplateId,name:el('template-name').value.trim(),category:el('template-category').value.trim(),content:el('template-content').value,updatedAt:0}});el('template-dialog').close();await loadTemplates(true);toast('提示词模板已保存在本机。');}
+    catch(e){toast(message(e),true);}finally{button.disabled=false;}
   }
   function renderGit(value){
     el('git-summary').textContent=`${value.clean?'工作区干净':'有未提交改动'} · 分支 ${value.branch} · ${value.cwd}`;
@@ -291,6 +331,7 @@
       const detail=await query({action:'detail',sessionId:id},profile);
       if(generation!==hub.detailGeneration||profile!==hub.profile)return;
       hub.detail=detail;
+      renderTemplates();
       renderUsage(detail);
       loadSkills(id,generation);
       loadJobs(id,profile,generation);
@@ -333,6 +374,11 @@
     finally{hub.watchBusy=false;el('watch-add').disabled=!hub.detail||hub.detail.session.archived;el('watch-stop').disabled=false;if(hub.detail)el('watch-add').textContent=hub.watched.has(hub.detail.session.sessionId)?'取消关注':'关注此会话';}
   }
   el('refresh').addEventListener('click',()=>refresh(!!el('search').value.trim()));
+  el('template-new').addEventListener('click',()=>openTemplateEditor());
+  el('template-form').addEventListener('submit',saveTemplate);
+  el('template-search').addEventListener('input',renderTemplates);
+  el('template-close').addEventListener('click',()=>el('template-dialog').close());
+  el('template-cancel').addEventListener('click',()=>el('template-dialog').close());
   el('switcher-search').addEventListener('input',renderSwitcher);
   el('switcher-search').addEventListener('keydown',event=>{if(event.key==='ArrowDown'){event.preventDefault();el('switcher-results').children[0]?.focus();}else if(event.key==='Enter'){event.preventDefault();el('switcher-results').children[0]?.click();}});
   el('switcher-close').addEventListener('click',()=>el('switcher-dialog').close());
@@ -373,7 +419,7 @@
   el('watch-stop').addEventListener('click',()=>watch(new Set()));
   el('native').addEventListener('change',()=>{if(hub.watched.size)watch(hub.watched);});
   el('notification-test').addEventListener('click',async()=>{try{await invoke('session_notification_test');el('notification-feedback').textContent='已向 Windows 请求测试通知。若没有显示，请检查系统通知设置。';}catch(e){el('notification-feedback').textContent=message(e);}});
-  window.sessionCenterOpen=()=>{loadCheckpoints();if(!hub.loaded&&!hub.loading)refresh();};
+  window.sessionCenterOpen=()=>{loadCheckpoints();loadTemplates();if(!hub.loaded&&!hub.loading)refresh();};
   window.openSessionSwitcher=()=>{if(hub.batchBusy){toast('批量操作完成后再切换会话。',true);return;}hub.switcherOpen=true;el('switcher-search').value='';el('switcher-dialog').showModal();renderSwitcher();el('switcher-search').focus();};
   (async()=>{
     if(!window.__TAURI__?.event)return;
