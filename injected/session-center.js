@@ -113,13 +113,16 @@
   const selection = values?.modelSelection;
   const permissionPreset = typeof values?.permissions?.currentValue === 'string' && values.permissions.currentValue.length <= 100
     ? values.permissions.currentValue : null;
+  const plan = values?.plan && typeof values.plan.active === 'boolean' && typeof values.plan.pending === 'boolean'
+    ? {active: values.plan.active, pending: values.plan.pending} : null;
   const route = value => value && typeof value.provider === 'string' && value.provider && typeof value.model === 'string' && value.model
     ? {provider: value.provider, model: value.model, ...(typeof value.reasoningEffort === 'string' ? {reasoningEffort: value.reasoningEffort} : {})} : null;
   const stats = projectionState === 'sequenced' ? {
     tokenUsage: pick(values?.tokenUsage, ['uncachedInputTokens','outputTokens','cacheReadTokens','cacheWriteTokens']),
     contextPressure: pick(values?.contextPressure, ['pressureTokens','projectedTokens','contextWindow']),
     modelSelection: {lastUsed: route(selection?.lastUsed), next: route(selection?.next)},
-    permissionPreset
+    permissionPreset,
+    planMode: plan
   } : null;
   return {session, messages, hasMore: page.hasMore, throughSeq, projectionState, stats,
     lastTurn: end ? {seq: end.seq, reason: end.data?.reason?.kind || 'unknown'} : null};

@@ -24,7 +24,8 @@
     const stats=detail.stats||{},usage=stats.tokenUsage||{},pressure=stats.contextPressure||{},models=stats.modelSelection||{};
     const fmt=n=>Number.isSafeInteger(n)?n.toLocaleString('zh-CN'):'不可用';
     const route=value=>value?`${sessionLabel(value.provider)} / ${sessionLabel(value.model)}${value.reasoningEffort?` · ${sessionLabel(value.reasoningEffort)}`:''}`:'不可用';
-    const rows=[['当前会话权限预设',typeof stats.permissionPreset==='string'?sessionLabel(stats.permissionPreset):'不可用'],['最近使用模型',route(models.lastUsed)],['下一次选择',route(models.next)],['未缓存输入 Token',fmt(usage.uncachedInputTokens)],['输出 Token',fmt(usage.outputTokens)],['缓存读取 Token',fmt(usage.cacheReadTokens)],['缓存写入 Token',fmt(usage.cacheWriteTokens)],['最近提示词压力',fmt(pressure.pressureTokens)],['预计下次提示词压力',fmt(pressure.projectedTokens)],['上下文窗口',fmt(pressure.contextWindow)]];
+    const plan=stats.planMode,planLabel=!plan?'不可用':plan.pending?'模式变更待生效':plan.active?'计划模式':'普通执行模式';
+    const rows=[['当前协作模式',planLabel],['当前会话权限预设',typeof stats.permissionPreset==='string'?sessionLabel(stats.permissionPreset):'不可用'],['最近使用模型',route(models.lastUsed)],['下一次选择',route(models.next)],['未缓存输入 Token',fmt(usage.uncachedInputTokens)],['输出 Token',fmt(usage.outputTokens)],['缓存读取 Token',fmt(usage.cacheReadTokens)],['缓存写入 Token',fmt(usage.cacheWriteTokens)],['最近提示词压力',fmt(pressure.pressureTokens)],['预计下次提示词压力',fmt(pressure.projectedTokens)],['上下文窗口',fmt(pressure.contextWindow)]];
     for(const [label,value] of rows){const row=document.createElement('div');row.className='session-usage-row';row.append(node('span',label),node('strong',value));target.append(row);}
   }
   async function loadSkills(sessionId, generation) {
