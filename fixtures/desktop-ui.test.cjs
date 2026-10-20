@@ -208,6 +208,48 @@ test('prompt templates save locally, filter, insert without sending, and delete 
  await row.children[1].children[2].events.click();await env.settle();assert.equal(templates.length,0);
  assert.ok(env.calls.some(c=>c.command==='prompt_template_delete'&&c.args.id==='template-1'));
 });
+test('session notes load by profile and real ID, update the continuation prompt, and save locally',async()=>{
+ const session={sessionId:'real-session-id',title:'Implementation',workspace:'Project',running:false,archived:false};
+ let saved=null;
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[session],profile:'profile-a'};
+  if(command==='session_query'&&args.request.action==='detail')return {session,messages:[],throughSeq:4,projectionState:'sequenced',profile:'profile-a'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs')return {jobs:[]};
+  if(command==='favorite_list'||command==='session_tags_list'||command==='checkpoint_list'||command==='prompt_template_list')return [];
+  if(command==='session_notes_list')return [{profile:'profile-a',sessionId:'real-session-id',content:'Keep compatibility with the existing file format.',updatedAt:1}];
+  if(command==='session_notes_save'){saved=args.note;return null;}
+  if(command==='workspace_git_status')return {clean:true,branch:'main',cwd:'D:/workspace',files:[],commits:[]};
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);env.context.window.sessionCenterOpen();await env.settle();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();await env.settle();
+ assert.equal(env.elements['session-note'].value,'Keep compatibility with the existing file format.');
+ assert.match(env.elements['session-prompt'].value,/本机备注（用户记录/);assert.match(env.elements['session-prompt'].value,/Keep compatibility with the existing file format\./);
+ env.elements['session-note'].value='Preserve the public JSON shape.';await env.fire('session-note','input');
+ assert.match(env.elements['session-prompt'].value,/Preserve the public JSON shape\./);
+ await env.fire('session-note-save');
+ assert.equal(saved.profile,'profile-a');assert.equal(saved.sessionId,'real-session-id');assert.equal(saved.content,'Preserve the public JSON shape.');
+});
+test('late session-note loading does not overwrite an in-progress edit',async()=>{
+ const session={sessionId:'session-1',title:'Current',workspace:'Project',running:false,archived:false};let resolveNotes;
+ const pendingNotes=new Promise(resolve=>{resolveNotes=resolve;});
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[session],profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session,messages:[],throughSeq:1,projectionState:'sequenced',profile:'p'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs')return {jobs:[]};
+  if(command==='session_notes_list')return pendingNotes;
+  if(command==='favorite_list'||command==='session_tags_list'||command==='checkpoint_list'||command==='prompt_template_list')return [];
+  if(command==='workspace_git_status')return {clean:true,branch:'main',cwd:'D:/workspace',files:[],commits:[]};
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);env.context.window.sessionCenterOpen();await env.settle();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();
+ env.elements['session-note'].value='Unsaved draft';await env.fire('session-note','input');
+ resolveNotes([{profile:'p',sessionId:'session-1',content:'Older saved note',updatedAt:1}]);await env.settle();await env.settle();
+ assert.equal(env.elements['session-note'].value,'Unsaved draft');assert.match(env.elements['session-prompt'].value,/Unsaved draft/);
+});
 test('session favorites are profile-scoped, filter by identity, and stay local',async()=>{
  const first={sessionId:'a',title:'Pinned task',workspace:'ws',running:false,archived:false};
  const second={sessionId:'b',title:'Other task',workspace:'ws',running:false,archived:false};

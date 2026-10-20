@@ -52,6 +52,7 @@ fn allowed(name: &str) -> bool {
             | "session-favorites.json"
             | "session-tags.json"
             | "prompt-templates.json"
+            | "session-notes.json"
             | "recycle.sqlite3"
     ) || name
         .strip_prefix("community-themes/")
@@ -198,6 +199,11 @@ fn validate(files: &Files, root: &Path) -> Result<()> {
                     serde_json::from_value(value).map_err(|_| "提示词模板文件无效")?;
                 crate::prompt_templates::validate(&entries)?;
             }
+            "session-notes.json" => {
+                let entries: Vec<crate::session_notes::SessionNote> =
+                    serde_json::from_value(value).map_err(|_| "会话备注文件无效")?;
+                crate::session_notes::validate(&entries)?;
+            }
             "imported-themes.json" | "community-themes.json" => {
                 let array = value.as_array().ok_or("主题库无效")?;
                 if array.len()
@@ -259,6 +265,7 @@ fn collect(root: &Path, records: bool, private_paths: bool) -> Result<Files> {
         "session-favorites.json",
         "session-tags.json",
         "prompt-templates.json",
+        "session-notes.json",
     ] {
         if root.join(name).exists() {
             files.insert(name.into(), read_limited(&root.join(name), LIMIT)?);
@@ -909,6 +916,28 @@ mod tests {
             serde_json::to_vec(&vec![invalid]).unwrap(),
         )]);
         assert!(validate(&files, &root.0).is_err());
+    }
+    #[test]
+    fn default_archive_round_trips_session_notes() {
+        let source = Temp::new();
+        let target = Temp::new();
+        let note = crate::session_notes::SessionNote {
+            profile: "profile-a".into(),
+            session_id: "session-a".into(),
+            content: "Keep the local fixture and avoid changing the API.".into(),
+            updated_at: 123,
+        };
+        fs::write(
+            source.0.join("session-notes.json"),
+            serde_json::to_vec(&vec![note.clone()]).unwrap(),
+        )
+        .unwrap();
+        let files = collect(&source.0, false, false).unwrap();
+        assert!(files.contains_key("session-notes.json"));
+        let (_, restored) = unpack(&pack(&files).unwrap(), &target.0).unwrap();
+        let entries: Vec<crate::session_notes::SessionNote> =
+            serde_json::from_slice(&restored["session-notes.json"]).unwrap();
+        assert_eq!(entries, vec![note]);
     }
     #[test]
     fn restore_keeps_unlisted_records_and_disables_automatic_enhancement() {
