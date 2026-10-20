@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  const hub = {sessions:[], profile:null, detail:null, gitSessionId:null, gitGeneration:0, checkpoints:[], favorites:new Set(), hits:new Map(), searchQuery:null, hasMore:false,
+  const hub = {sessions:[], profile:null, detail:null, gitSessionId:null, gitGeneration:0, checkpoints:[], favorites:new Set(), tags:new Map(), hits:new Map(), searchQuery:null, hasMore:false,
     loaded:false, loading:false, generation:0, detailGeneration:0, page:0, watched:new Set(), watchBusy:false, searchInfo:'',compareMode:false,compareIds:new Set(),compareGeneration:0};
   const el = id => document.getElementById(`session-${id}`);
   const node = (tag, text, cls) => {const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;};
@@ -12,12 +12,13 @@
   function clearDetail() {
     hub.detail=null;hub.detailGeneration++;
     el('detail-title').textContent='选择一个会话';el('detail-meta').textContent='查看真实消息摘录，再生成继续任务提示词。';
+    el('tags-input').value='';
     el('excerpts').replaceChildren();el('prompt').value='';el('next-task').value='';el('prompt').readOnly=true;
     hub.gitSessionId=null;hub.gitGeneration++;el('git-summary').textContent='选择包含 Git 仓库目录的会话后读取。';el('git-files').replaceChildren(node('p','尚未读取 Git 状态。','session-empty'));el('git-commits').textContent='—';el('git-refresh').disabled=true;
     el('usage').replaceChildren(node('p','选择会话后读取 Harness 已记录的数据。','session-empty'));
     el('jobs').replaceChildren(node('p','尚未读取后台任务。','session-empty'));el('jobs-status').textContent='选择会话后读取当前后台任务名册。';el('jobs-refresh').disabled=true;
     el('plan-command').disabled=true;el('plan-command').textContent='计划状态不可用';
-    for(const id of ['open','watch-add','favorite-toggle','copy','export','checkpoint-save'])el(id).disabled=true;
+    for(const id of ['open','watch-add','favorite-toggle','tags-save','copy','export','checkpoint-save'])el(id).disabled=true;
   }
   function renderUsage(detail) {
     const target=el('usage');target.replaceChildren();
@@ -90,7 +91,8 @@
     const text=el('search').value.trim().toLocaleLowerCase();
     const workspace=el('workspace').value, filter=el('filter').value;
     const visible=hub.sessions.filter(s=>{
-      const metadata=`${s.title} ${s.workspace} ${s.cwd||''} ${s.sessionId} ${sessionLabel(s.title)} ${sessionLabel(s.workspace)}`.toLocaleLowerCase().includes(text);
+      const tags=hub.tags.get(s.sessionId)||[];
+      const metadata=`${s.title} ${s.workspace} ${s.cwd||''} ${s.sessionId} ${tags.join(' ')} ${sessionLabel(s.title)} ${sessionLabel(s.workspace)}`.toLocaleLowerCase().includes(text);
       return (!text||metadata||(hub.searchQuery===text&&hub.hits.has(s.sessionId)))&&(!workspace||s.workspace===workspace)&&
         (filter==='all'||filter==='favorite'&&hub.favorites.has(s.sessionId)||filter==='archived'&&s.archived||filter==='running'&&!s.archived&&s.running===true||
         filter==='waiting'&&!s.archived&&!!s.pending||filter==='idle'&&!s.archived&&s.running===false);
@@ -100,11 +102,13 @@
     el('prev').disabled=hub.page===0;el('next').disabled=hub.page+1>=pages;
     el('results').replaceChildren();
     for(const s of visible.slice(hub.page*30,(hub.page+1)*30)) {
+      const sessionTags=hub.tags.get(s.sessionId)||[];
       const button=node('button','',`session-card${hub.detail?.session.sessionId===s.sessionId?' selected':''}${hub.compareIds.has(s.sessionId)?' compare-selected':''}`);
       button.dataset.sessionId=s.sessionId;
       button.type='button';button.append(node('strong',sessionLabel(s.title)||'未命名会话'),node('small',`${sessionLabel(s.workspace)||'未分组'} · ${label(s)}`));
       button.append(node('small',s.sessionId,'session-id'));
       if(hub.favorites.has(s.sessionId))button.append(node('small','已收藏','session-favorite-label'));
+      if(sessionTags.length)button.append(node('small',sessionTags.join(' · '),'session-tags-label'));
       if(!s.statusObserved&&!s.archived)button.append(node('small','等待状态未观测','subtle'));
       const snippet=hub.searchQuery===text?hub.hits.get(s.sessionId):null;
       if(snippet)button.append(node('p',snippet,'session-hit'));
@@ -121,8 +125,8 @@
   }
   function accept(snapshot) {
     status(true,'已通过会话中心读取当前 Harness 实例。');
-      if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();hub.favorites.clear();renderWatched();clearDetail();clearCompare();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
-    hub.profile=snapshot.profile;hub.sessions=snapshot.sessions.filter(s=>s.origin!=='subagent');hub.loaded=true;loadFavorites(snapshot.profile);
+      if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();hub.favorites.clear();hub.tags.clear();renderWatched();clearDetail();clearCompare();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
+    hub.profile=snapshot.profile;hub.sessions=snapshot.sessions.filter(s=>s.origin!=='subagent');hub.loaded=true;loadFavorites(snapshot.profile);loadSessionTags(snapshot.profile);
       renderCheckpoints();
     const selected=el('workspace').value;
     el('workspace').replaceChildren(new Option('全部工作区',''));
@@ -138,6 +142,18 @@
     const session=hub.detail?.session,profile=hub.profile;if(!session||!profile)return;el('favorite-toggle').disabled=true;
     try{const saved=await invoke('favorite_toggle',{favorite:{profile,sessionId:session.sessionId,title:session.title||'',workspace:session.workspace||'',updatedAt:Date.now()}});if(profile!==hub.profile||hub.detail?.session.sessionId!==session.sessionId)return;await loadFavorites(profile);el('favorite-toggle').textContent=saved?'取消收藏':'收藏会话';toast(saved?'会话已收藏。':'已取消收藏。');}
     catch(e){toast(message(e),true);}finally{if(hub.detail?.session.sessionId===session.sessionId)el('favorite-toggle').disabled=false;}
+  }
+  async function loadSessionTags(profile){
+    try{const items=await invoke('session_tags_list',{profile});if(profile!==hub.profile)return;hub.tags=new Map(items.map(item=>[item.sessionId,item.tags]));render();if(hub.detail)el('tags-input').value=(hub.tags.get(hub.detail.session.sessionId)||[]).join(', ');}
+    catch(e){if(profile===hub.profile){hub.tags.clear();render();el('notification-feedback').textContent=`会话标签不可用：${message(e)}`;}}
+  }
+  async function saveSessionTags(){
+    const session=hub.detail?.session,profile=hub.profile;if(!session||!profile)return;
+    const raw=el('tags-input').value,values=raw.split(',').map(tag=>tag.trim()).filter(Boolean),unique=[...new Map(values.map(tag=>[tag.toLocaleLowerCase(),tag])).values()];
+    if(unique.length>8||unique.some(tag=>[...tag].length>32)){toast('最多 8 个标签，每个标签不超过 32 个字符。',true);return;}
+    const button=el('tags-save');button.disabled=true;
+    try{await invoke('session_tags_save',{item:{profile,sessionId:session.sessionId,tags:unique}});if(profile!==hub.profile||hub.detail?.session.sessionId!==session.sessionId)return;hub.tags.set(session.sessionId,unique);render();el('tags-input').value=unique.join(', ');toast(unique.length?'会话标签已保存。':'会话标签已清除。');}
+    catch(e){toast(message(e),true);}finally{button.disabled=!hub.detail;}
   }
   async function refresh(search=false) {
     if(hub.loading)return;
@@ -198,6 +214,7 @@
       el('prompt').readOnly=false;compose();el('copy').disabled=false;el('export').disabled=false;el('checkpoint-save').disabled=detail.session.archived;
       el('open').disabled=detail.session.archived;el('watch-add').disabled=detail.session.archived||hub.watchBusy;
       el('favorite-toggle').disabled=false;el('favorite-toggle').textContent=hub.favorites.has(id)?'取消收藏':'收藏会话';
+      el('tags-input').value=(hub.tags.get(id)||[]).join(', ');el('tags-save').disabled=false;
       hub.gitSessionId=detail.session.cwd?detail.session.sessionId:null;el('git-refresh').disabled=!hub.gitSessionId;loadGit(hub.gitSessionId);
       el('watch-add').textContent=hub.watched.has(id)?'取消关注':'关注此会话';render();
     }catch(e){if(generation===hub.detailGeneration){clearDetail();error(message(e));}}
@@ -226,6 +243,7 @@
   }
   el('refresh').addEventListener('click',()=>refresh(!!el('search').value.trim()));
   el('favorite-toggle').addEventListener('click',toggleFavorite);
+  el('tags-save').addEventListener('click',saveSessionTags);
   el('compare-mode').addEventListener('click',()=>clearCompare(!hub.compareMode));
   el('compare-run').addEventListener('click',compareSelected);
   el('search-form').addEventListener('submit',e=>{e.preventDefault();return refresh(true);});

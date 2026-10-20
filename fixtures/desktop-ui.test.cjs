@@ -173,6 +173,26 @@ test('session favorites are profile-scoped, filter by identity, and stay local',
  await env.elements['session-results'].children[0].events.click();await env.settle();await env.fire('session-favorite-toggle');await env.settle();assert.equal(env.elements['session-favorite-toggle'].textContent,'收藏会话');
  assert(env.calls.every(c=>!['delete_sessions','archive_session','restore_session'].includes(c.command)));
 });
+test('session tags save locally, search by tag and clear without mutating sessions',async()=>{
+ const first={sessionId:'a',title:'Task alpha',workspace:'ws',running:false,archived:false};
+ const second={sessionId:'b',title:'Task beta',workspace:'ws',running:false,archived:false};
+ let tags=[];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[first,second],profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:args.request.sessionId==='a'?first:second,messages:[],throughSeq:1,profile:'p',projectionState:'sequenced',stats:{}};
+  if(command==='session_tags_list')return tags;
+  if(command==='session_tags_save'){assert.equal(args.item.profile,'p');tags=tags.filter(item=>item.sessionId!==args.item.sessionId);if(args.item.tags.length)tags.push(args.item);return null;}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();
+ env.elements['session-tags-input'].value='release, follow-up';await env.fire('session-tags-save');
+ assert.deepEqual(Array.from(tags[0].tags),['release','follow-up']);const text=node=>[node.textContent,...node.children.map(text)].join(' ');assert.match(text(env.elements['session-results'].children[0]),/release/);
+ env.elements['session-search'].value='follow-up';await env.fire('session-search','input');assert.equal(env.elements['session-results'].children.length,1);
+ env.elements['session-tags-input'].value='release, release';await env.fire('session-tags-save');assert.deepEqual(Array.from(tags[0].tags),['release']);
+ env.elements['session-tags-input'].value='';await env.fire('session-tags-save');assert.equal(tags.length,0);
+ assert(env.calls.every(c=>!['delete_sessions','archive_session','restore_session'].includes(c.command)));
+});
 test('session comparison is profile-bound, read-only and limited to two sessions',async()=>{
  const sessions=['a','b','c'].map((id,i)=>({sessionId:id,title:`Task ${id}`,workspace:'ws',running:false,archived:false}));
  const detailCalls=[];

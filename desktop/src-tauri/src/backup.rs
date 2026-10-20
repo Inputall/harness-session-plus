@@ -50,6 +50,7 @@ fn allowed(name: &str) -> bool {
             | "saved-appearance.json"
             | "session-checkpoints.json"
             | "session-favorites.json"
+            | "session-tags.json"
             | "recycle.sqlite3"
     ) || name
         .strip_prefix("community-themes/")
@@ -186,6 +187,11 @@ fn validate(files: &Files, root: &Path) -> Result<()> {
                     serde_json::from_value(value).map_err(|_| "会话收藏文件无效")?;
                 crate::favorites::validate(&entries)?;
             }
+            "session-tags.json" => {
+                let entries: Vec<crate::session_tags::SessionTags> =
+                    serde_json::from_value(value).map_err(|_| "会话标签文件无效")?;
+                crate::session_tags::validate(&entries)?;
+            }
             "imported-themes.json" | "community-themes.json" => {
                 let array = value.as_array().ok_or("主题库无效")?;
                 if array.len()
@@ -245,6 +251,7 @@ fn collect(root: &Path, records: bool, private_paths: bool) -> Result<Files> {
         "saved-appearance.json",
         "session-checkpoints.json",
         "session-favorites.json",
+        "session-tags.json",
     ] {
         if root.join(name).exists() {
             files.insert(name.into(), read_limited(&root.join(name), LIMIT)?);
@@ -834,6 +841,28 @@ mod tests {
         let entries: Vec<crate::favorites::Favorite> =
             serde_json::from_slice(&restored["session-favorites.json"]).unwrap();
         assert_eq!(entries, vec![favorite]);
+    }
+
+    #[test]
+    fn default_archive_round_trips_session_tags() {
+        let source = Temp::new();
+        let target = Temp::new();
+        let tags = crate::session_tags::SessionTags {
+            profile: "profile-a".into(),
+            session_id: "session-a".into(),
+            tags: vec!["project".into(), "follow-up".into()],
+        };
+        fs::write(
+            source.0.join("session-tags.json"),
+            serde_json::to_vec(&vec![tags.clone()]).unwrap(),
+        )
+        .unwrap();
+        let files = collect(&source.0, false, false).unwrap();
+        assert!(files.contains_key("session-tags.json"));
+        let (_, restored) = unpack(&pack(&files).unwrap(), &target.0).unwrap();
+        let entries: Vec<crate::session_tags::SessionTags> =
+            serde_json::from_slice(&restored["session-tags.json"]).unwrap();
+        assert_eq!(entries, vec![tags]);
     }
     #[test]
     fn restore_keeps_unlisted_records_and_disables_automatic_enhancement() {

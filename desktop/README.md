@@ -33,7 +33,7 @@ cargo build --manifest-path desktop/src-tauri/Cargo.toml --release --locked
 - 真实 ID 核验，运行或未知状态拒绝操作；结果不明时不自动重放。
 - 会话检查点：保存本机元数据和继续提示词，恢复前重新核对 profile、真实会话 ID、标题、工作区及归档状态；不会发送消息、恢复聊天正文或修改项目文件。
 - 会话收藏：按 profile 保存最多 200 个常用会话的真实 ID、标题和工作区，支持收藏筛选；不保存正文，包含在工具备份中。
-- 会话收藏：按 profile 保存最多 200 个常用会话的真实 ID、标题和工作区，支持收藏筛选；不保存正文，包含在工具备份中。
+- 自定义标签：每个会话最多 8 个标签、每个最多 32 字符，按 profile 和真实 ID 存储，可用搜索框检索；包含在工具备份中。
 - Git 工作区只读面板：按所选会话目录显示当前分支、暂存/未暂存/未跟踪文件和最近 5 次提交；不提交、暂存、切换或重置。
 - 模型、用量、权限与协作模式面板：只读显示 Harness 持久化模型路由、提供方 Token 汇总、上下文压力、当前会话权限预设和计划模式状态。
 - 计划模式快捷命令：依据当前会话计划投影复制 `/plan` 或 `/plan off`，仅供用户回到 Harness 手动粘贴发送。
@@ -50,7 +50,7 @@ cargo build --manifest-path desktop/src-tauri/Cargo.toml --release --locked
 
 ## 数据和权限
 
-Tauri `app_config_dir` 保存 settings.json、active-theme.json、recycle.sqlite3、session-checkpoints.json、session-favorites.json、imported-themes.json、community-themes.json、community-themes/ 和用户主动导出的 capability-report.json。回收站记录包含 ID、标题、工作区和操作状态；收藏只保存会话标识元数据；均不保存聊天正文。主题守护独立于管理窗口，但不会随 Windows 开机自动启动。
+Tauri `app_config_dir` 保存 settings.json、active-theme.json、recycle.sqlite3、session-checkpoints.json、session-favorites.json、session-tags.json、imported-themes.json、community-themes.json、community-themes/ 和用户主动导出的 capability-report.json。回收站记录包含 ID、标题、工作区和操作状态；收藏和标签只保存会话标识元数据；均不保存聊天正文。主题守护独立于管理窗口，但不会随 Windows 开机自动启动。
 
 固定 Rust commands 执行业务。管理前端不直接修改 Harness 文件，没有 shell/filesystem 插件；CSP 禁止远程脚本。页面 JS 用于界面和版本受约束的接口桥接，不负责文件清理或持久化。
 
