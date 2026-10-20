@@ -155,6 +155,24 @@ test('permanent deletion check is read-only and displays backend refusal',async(
 });
 
 const sessionSource=fs.readFileSync(path.join(__dirname,'../desktop/ui/session-center.js'),'utf8');
+test('session favorites are profile-scoped, filter by identity, and stay local',async()=>{
+ const first={sessionId:'a',title:'Pinned task',workspace:'ws',running:false,archived:false};
+ const second={sessionId:'b',title:'Other task',workspace:'ws',running:false,archived:false};
+ let favorite=[];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[first,second],profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:args.request.sessionId==='a'?first:second,messages:[],throughSeq:1,profile:'p',projectionState:'sequenced',stats:{}};
+  if(command==='favorite_list'){assert.equal(args.profile,'p');return favorite;}
+  if(command==='favorite_toggle'){assert.equal(args.favorite.profile,'p');favorite=favorite.length?[]:[args.favorite];return !favorite.length?false:true;}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();assert.equal(env.elements['session-favorite-toggle'].textContent,'收藏会话');
+ await env.fire('session-favorite-toggle');await env.settle();assert.equal(env.elements['session-favorite-toggle'].textContent,'取消收藏');
+ env.elements['session-filter'].value='favorite';env.elements['session-filter'].events.change();assert.equal(env.elements['session-results'].children.length,1);assert.equal(env.elements['session-results'].children[0].dataset.sessionId,'a');
+ await env.elements['session-results'].children[0].events.click();await env.settle();await env.fire('session-favorite-toggle');await env.settle();assert.equal(env.elements['session-favorite-toggle'].textContent,'收藏会话');
+ assert(env.calls.every(c=>!['delete_sessions','archive_session','restore_session'].includes(c.command)));
+});
 test('session comparison is profile-bound, read-only and limited to two sessions',async()=>{
  const sessions=['a','b','c'].map((id,i)=>({sessionId:id,title:`Task ${id}`,workspace:'ws',running:false,archived:false}));
  const detailCalls=[];

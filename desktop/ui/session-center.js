@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  const hub = {sessions:[], profile:null, detail:null, gitSessionId:null, gitGeneration:0, checkpoints:[], hits:new Map(), searchQuery:null, hasMore:false,
+  const hub = {sessions:[], profile:null, detail:null, gitSessionId:null, gitGeneration:0, checkpoints:[], favorites:new Set(), hits:new Map(), searchQuery:null, hasMore:false,
     loaded:false, loading:false, generation:0, detailGeneration:0, page:0, watched:new Set(), watchBusy:false, searchInfo:'',compareMode:false,compareIds:new Set(),compareGeneration:0};
   const el = id => document.getElementById(`session-${id}`);
   const node = (tag, text, cls) => {const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;};
@@ -17,7 +17,7 @@
     el('usage').replaceChildren(node('p','选择会话后读取 Harness 已记录的数据。','session-empty'));
     el('jobs').replaceChildren(node('p','尚未读取后台任务。','session-empty'));el('jobs-status').textContent='选择会话后读取当前后台任务名册。';el('jobs-refresh').disabled=true;
     el('plan-command').disabled=true;el('plan-command').textContent='计划状态不可用';
-    for(const id of ['open','watch-add','copy','export','checkpoint-save'])el(id).disabled=true;
+    for(const id of ['open','watch-add','favorite-toggle','copy','export','checkpoint-save'])el(id).disabled=true;
   }
   function renderUsage(detail) {
     const target=el('usage');target.replaceChildren();
@@ -92,7 +92,7 @@
     const visible=hub.sessions.filter(s=>{
       const metadata=`${s.title} ${s.workspace} ${s.cwd||''} ${s.sessionId} ${sessionLabel(s.title)} ${sessionLabel(s.workspace)}`.toLocaleLowerCase().includes(text);
       return (!text||metadata||(hub.searchQuery===text&&hub.hits.has(s.sessionId)))&&(!workspace||s.workspace===workspace)&&
-        (filter==='all'||filter==='archived'&&s.archived||filter==='running'&&!s.archived&&s.running===true||
+        (filter==='all'||filter==='favorite'&&hub.favorites.has(s.sessionId)||filter==='archived'&&s.archived||filter==='running'&&!s.archived&&s.running===true||
         filter==='waiting'&&!s.archived&&!!s.pending||filter==='idle'&&!s.archived&&s.running===false);
     });
     const pages=Math.max(1,Math.ceil(visible.length/30));hub.page=Math.min(hub.page,pages-1);
@@ -104,6 +104,7 @@
       button.dataset.sessionId=s.sessionId;
       button.type='button';button.append(node('strong',sessionLabel(s.title)||'未命名会话'),node('small',`${sessionLabel(s.workspace)||'未分组'} · ${label(s)}`));
       button.append(node('small',s.sessionId,'session-id'));
+      if(hub.favorites.has(s.sessionId))button.append(node('small','已收藏','session-favorite-label'));
       if(!s.statusObserved&&!s.archived)button.append(node('small','等待状态未观测','subtle'));
       const snippet=hub.searchQuery===text?hub.hits.get(s.sessionId):null;
       if(snippet)button.append(node('p',snippet,'session-hit'));
@@ -120,14 +121,23 @@
   }
   function accept(snapshot) {
     status(true,'已通过会话中心读取当前 Harness 实例。');
-      if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();renderWatched();clearDetail();clearCompare();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
-    hub.profile=snapshot.profile;hub.sessions=snapshot.sessions.filter(s=>s.origin!=='subagent');hub.loaded=true;
+      if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();hub.favorites.clear();renderWatched();clearDetail();clearCompare();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
+    hub.profile=snapshot.profile;hub.sessions=snapshot.sessions.filter(s=>s.origin!=='subagent');hub.loaded=true;loadFavorites(snapshot.profile);
       renderCheckpoints();
     const selected=el('workspace').value;
     el('workspace').replaceChildren(new Option('全部工作区',''));
     for(const name of [...new Set(hub.sessions.map(s=>s.workspace).filter(Boolean))].sort())el('workspace').add(new Option(sessionLabel(name),name));
     el('workspace').value=[...el('workspace').children].some(o=>o.value===selected)?selected:'';
     render();
+  }
+  async function loadFavorites(profile){
+    try{const values=await invoke('favorite_list',{profile});if(profile!==hub.profile)return;hub.favorites=new Set(values.map(item=>item.sessionId));render();if(hub.detail)el('favorite-toggle').textContent=hub.favorites.has(hub.detail.session.sessionId)?'取消收藏':'收藏会话';}
+    catch(e){if(profile===hub.profile){hub.favorites.clear();render();el('notification-feedback').textContent=`收藏清单不可用：${message(e)}`;}}
+  }
+  async function toggleFavorite(){
+    const session=hub.detail?.session,profile=hub.profile;if(!session||!profile)return;el('favorite-toggle').disabled=true;
+    try{const saved=await invoke('favorite_toggle',{favorite:{profile,sessionId:session.sessionId,title:session.title||'',workspace:session.workspace||'',updatedAt:Date.now()}});if(profile!==hub.profile||hub.detail?.session.sessionId!==session.sessionId)return;await loadFavorites(profile);el('favorite-toggle').textContent=saved?'取消收藏':'收藏会话';toast(saved?'会话已收藏。':'已取消收藏。');}
+    catch(e){toast(message(e),true);}finally{if(hub.detail?.session.sessionId===session.sessionId)el('favorite-toggle').disabled=false;}
   }
   async function refresh(search=false) {
     if(hub.loading)return;
@@ -187,6 +197,7 @@
       if(detail.lastTurn)el('excerpts').append(node('small',`最近轮次结束原因（原生值）：${detail.lastTurn.reason}`,'subtle'));
       el('prompt').readOnly=false;compose();el('copy').disabled=false;el('export').disabled=false;el('checkpoint-save').disabled=detail.session.archived;
       el('open').disabled=detail.session.archived;el('watch-add').disabled=detail.session.archived||hub.watchBusy;
+      el('favorite-toggle').disabled=false;el('favorite-toggle').textContent=hub.favorites.has(id)?'取消收藏':'收藏会话';
       hub.gitSessionId=detail.session.cwd?detail.session.sessionId:null;el('git-refresh').disabled=!hub.gitSessionId;loadGit(hub.gitSessionId);
       el('watch-add').textContent=hub.watched.has(id)?'取消关注':'关注此会话';render();
     }catch(e){if(generation===hub.detailGeneration){clearDetail();error(message(e));}}
@@ -214,6 +225,7 @@
     finally{hub.watchBusy=false;el('watch-add').disabled=!hub.detail||hub.detail.session.archived;el('watch-stop').disabled=false;if(hub.detail)el('watch-add').textContent=hub.watched.has(hub.detail.session.sessionId)?'取消关注':'关注此会话';}
   }
   el('refresh').addEventListener('click',()=>refresh(!!el('search').value.trim()));
+  el('favorite-toggle').addEventListener('click',toggleFavorite);
   el('compare-mode').addEventListener('click',()=>clearCompare(!hub.compareMode));
   el('compare-run').addEventListener('click',compareSelected);
   el('search-form').addEventListener('submit',e=>{e.preventDefault();return refresh(true);});

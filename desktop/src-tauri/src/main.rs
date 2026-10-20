@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod backup;
 mod checkpoints;
+mod favorites;
 mod session_center;
 mod theme_keeper;
 mod workspace;
@@ -80,6 +81,7 @@ struct Desktop {
     recycle_cancel: Mutex<Option<CancellationToken>>,
     session_cancel: Mutex<Option<CancellationToken>>,
     checkpoint_lock: Mutex<()>,
+    favorites_lock: Mutex<()>,
     #[cfg(windows)]
     session_toasts: Mutex<Vec<windows::UI::Notifications::ToastNotification>>,
     root: PathBuf,
@@ -902,6 +904,7 @@ fn main() {
                 recycle_cancel: Mutex::new(None),
                 session_cancel: Mutex::new(None),
                 checkpoint_lock: Mutex::new(()),
+                favorites_lock: Mutex::new(()),
                 #[cfg(windows)]
                 session_toasts: Mutex::new(Vec::new()),
                 root,
@@ -963,6 +966,8 @@ fn main() {
             checkpoints::checkpoint_create,
             checkpoints::checkpoint_restore,
             checkpoints::checkpoint_delete,
+            favorites::favorite_list,
+            favorites::favorite_toggle,
             workspace::workspace_git_status,
             install_recycle,
             recycle_restore_preference,
