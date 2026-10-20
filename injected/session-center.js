@@ -40,12 +40,18 @@
   });
   const history = async sessionId => {
     const projections = await rpc('session/projections', {request: {sessionId}});
-    if (!Number.isSafeInteger(projections?.asOfSeq) || projections.asOfSeq < -1) throw Error('Session cursor unavailable');
+    if (projections?.kind !== 'sequenced' || !Number.isSafeInteger(projections?.asOfSeq) || projections.asOfSeq < -1) {
+      return {projectionState: projections?.kind === 'migration-required' ? 'migration-required' : 'unavailable', values: null, page: {records: [], hasMore: true}};
+    }
+    const page = await readPage(sessionId, projections.asOfSeq);
+    return {page, throughSeq: projections.asOfSeq, values: projections.values || {}, projectionState: 'sequenced'};
+  };
+  const readPage = async (sessionId, throughSeq) => {
     const page = await rpc('session/page', {request: {
-      address: {kind: 'session', sessionId}, throughSeq: projections.asOfSeq, maxMessages: 20
+      address: {kind: 'session', sessionId}, ...(Number.isSafeInteger(throughSeq) ? {throughSeq} : {}), maxMessages: 20
     }});
     if (!Array.isArray(page.records)) throw Error('Unsupported history page');
-    return {page, throughSeq: projections.asOfSeq};
+    return page;
   };
   const texts = page => page.records.filter(r => r.type === 'event' &&
     ['user/message','assistant/message'].includes(r.event?.type) && r.event.surfaceOp === 'append').map(r => {
@@ -90,9 +96,18 @@
     return {opened: true};
   }
   if (request.action !== 'detail') throw Error('Unsupported read action');
-  const {page,throughSeq}=await history(session.sessionId);
+  const {page,throughSeq,values,projectionState}=await history(session.sessionId);
   const messages=texts(page).map(m=>({...m,text:m.text.slice(0,6000)}));
   const end = page.records.filter(r => r.type === 'event' && r.event?.type === 'turn/end').at(-1)?.event;
-  return {session, messages, hasMore: page.hasMore, throughSeq,
+  const pick = (value, keys) => value && typeof value === 'object' ? Object.fromEntries(keys.filter(k => Number.isSafeInteger(value[k]) && value[k] >= 0).map(k => [k, value[k]])) : {};
+  const selection = values?.modelSelection;
+  const route = value => value && typeof value.provider === 'string' && value.provider && typeof value.model === 'string' && value.model
+    ? {provider: value.provider, model: value.model, ...(typeof value.reasoningEffort === 'string' ? {reasoningEffort: value.reasoningEffort} : {})} : null;
+  const stats = projectionState === 'sequenced' ? {
+    tokenUsage: pick(values?.tokenUsage, ['uncachedInputTokens','outputTokens','cacheReadTokens','cacheWriteTokens']),
+    contextPressure: pick(values?.contextPressure, ['pressureTokens','projectedTokens','contextWindow']),
+    modelSelection: {lastUsed: route(selection?.lastUsed), next: route(selection?.next)}
+  } : null;
+  return {session, messages, hasMore: page.hasMore, throughSeq, projectionState, stats,
     lastTurn: end ? {seq: end.seq, reason: end.data?.reason?.kind || 'unknown'} : null};
 })

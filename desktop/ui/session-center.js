@@ -13,7 +13,19 @@
     el('detail-title').textContent='选择一个会话';el('detail-meta').textContent='查看真实消息摘录，再生成继续任务提示词。';
     el('excerpts').replaceChildren();el('prompt').value='';el('next-task').value='';el('prompt').readOnly=true;
     hub.gitSessionId=null;hub.gitGeneration++;el('git-summary').textContent='选择包含 Git 仓库目录的会话后读取。';el('git-files').replaceChildren(node('p','尚未读取 Git 状态。','session-empty'));el('git-commits').textContent='—';el('git-refresh').disabled=true;
+    el('usage').replaceChildren(node('p','选择会话后读取 Harness 已记录的数据。','session-empty'));
     for(const id of ['open','watch-add','copy','export','checkpoint-save'])el(id).disabled=true;
+  }
+  function renderUsage(detail) {
+    const target=el('usage');target.replaceChildren();
+    if(detail.projectionState!=='sequenced'){
+      target.append(node('p',detail.projectionState==='migration-required'?'Harness 标记此会话需要迁移；为避免展示旧缓存，当前用量不可用。':'Harness 未提供可验证的用量投影。','session-empty'));return;
+    }
+    const stats=detail.stats||{},usage=stats.tokenUsage||{},pressure=stats.contextPressure||{},models=stats.modelSelection||{};
+    const fmt=n=>Number.isSafeInteger(n)?n.toLocaleString('zh-CN'):'不可用';
+    const route=value=>value?`${sessionLabel(value.provider)} / ${sessionLabel(value.model)}${value.reasoningEffort?` · ${sessionLabel(value.reasoningEffort)}`:''}`:'不可用';
+    const rows=[['最近使用模型',route(models.lastUsed)],['下一次选择',route(models.next)],['未缓存输入 Token',fmt(usage.uncachedInputTokens)],['输出 Token',fmt(usage.outputTokens)],['缓存读取 Token',fmt(usage.cacheReadTokens)],['缓存写入 Token',fmt(usage.cacheWriteTokens)],['最近提示词压力',fmt(pressure.pressureTokens)],['预计下次提示词压力',fmt(pressure.projectedTokens)],['上下文窗口',fmt(pressure.contextWindow)]];
+    for(const [label,value] of rows){const row=document.createElement('div');row.className='session-usage-row';row.append(node('span',label),node('strong',value));target.append(row);}
   }
   function renderCheckpoints() {
     const target=el('checkpoints');target.replaceChildren();
@@ -104,12 +116,14 @@
       const detail=await query({action:'detail',sessionId:id},profile);
       if(generation!==hub.detailGeneration||profile!==hub.profile)return;
       hub.detail=detail;
+      renderUsage(detail);
       el('detail-title').textContent=sessionLabel(detail.session.title)||'未命名会话';
-      el('detail-meta').textContent=`${sessionLabel(detail.session.workspace)||'未分组'} · ${label(detail.session)} · ID ${id} · 截至事件 ${detail.throughSeq}${detail.hasMore?'（仅最近一页）':'（历史起点已覆盖）'}`;
+      el('detail-meta').textContent=`${sessionLabel(detail.session.workspace)||'未分组'} · ${label(detail.session)} · ID ${id}${Number.isSafeInteger(detail.throughSeq)?` · 截至事件 ${detail.throughSeq}`:''}${detail.hasMore?'（仅最近一页）':'（历史起点已覆盖）'}`;
       for(const m of detail.messages) {
         const part=node('article','','session-message');part.append(node('small',`${m.role==='user'?'用户':'助手'} · #${m.seq}`),node('p',m.text));el('excerpts').append(part);
       }
-      if(!detail.messages.length)el('excerpts').append(node('p','该页没有可显示的文本消息；图片、工具输出和推理内容不在摘录范围内。'));
+      if(detail.projectionState!=='sequenced')el('excerpts').append(node('p',detail.projectionState==='migration-required'?'此会话需要 Harness 数据迁移，当前无法取得经过序号确认的历史页面。':'Harness 未提供可验证的历史游标，暂不读取会话摘录。'));
+      else if(!detail.messages.length)el('excerpts').append(node('p','该页没有可显示的文本消息；图片、工具输出和推理内容不在摘录范围内。'));
       if(detail.lastTurn)el('excerpts').append(node('small',`最近轮次结束原因（原生值）：${detail.lastTurn.reason}`,'subtle'));
       el('prompt').readOnly=false;compose();el('copy').disabled=false;el('export').disabled=false;el('checkpoint-save').disabled=detail.session.archived;
       el('open').disabled=detail.session.archived;el('watch-add').disabled=detail.session.archived||hub.watchBusy;
