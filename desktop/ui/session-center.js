@@ -14,6 +14,7 @@
     el('excerpts').replaceChildren();el('prompt').value='';el('next-task').value='';el('prompt').readOnly=true;
     hub.gitSessionId=null;hub.gitGeneration++;el('git-summary').textContent='选择包含 Git 仓库目录的会话后读取。';el('git-files').replaceChildren(node('p','尚未读取 Git 状态。','session-empty'));el('git-commits').textContent='—';el('git-refresh').disabled=true;
     el('usage').replaceChildren(node('p','选择会话后读取 Harness 已记录的数据。','session-empty'));
+    el('jobs').replaceChildren(node('p','尚未读取后台任务。','session-empty'));el('jobs-status').textContent='选择会话后读取当前后台任务名册。';el('jobs-refresh').disabled=true;
     el('plan-command').disabled=true;el('plan-command').textContent='计划状态不可用';
     for(const id of ['open','watch-add','copy','export','checkpoint-save'])el(id).disabled=true;
   }
@@ -39,6 +40,18 @@
       if(!result.skills.length){target.append(node('p','当前会话没有可调用技能。','session-empty'));return;}
       for(const skill of result.skills){const row=document.createElement('div');row.className='session-skill-row';const heading=document.createElement('div');heading.className='session-usage-row';heading.append(node('span',skill.name),node('strong',skill.modelInvocable?'模型可调用':'仅用户可调用'));row.append(heading);if(skill.description)row.append(node('small',skill.description));if(skill.whenToUse)row.append(node('small',`适用场景：${skill.whenToUse}`));target.append(row);}
     }catch(e){if(generation===hub.detailGeneration){const target=el('usage');target.append(node('p',`技能清单不可用：${message(e)}`,'session-empty'));}}
+  }
+  async function loadJobs(sessionId=hub.detail?.session.sessionId, profile=hub.profile, generation=hub.detailGeneration) {
+    if(!sessionId||!profile)return;el('jobs-refresh').disabled=true;el('jobs-status').textContent='正在读取当前会话后台任务…';
+    try{
+      const result=await query({action:'jobs',sessionId},profile);if(generation!==hub.detailGeneration||hub.profile!==profile)return;
+      const target=el('jobs');target.replaceChildren();
+      if(!result.jobs.length){target.append(node('p','当前会话没有可见的后台任务。','session-empty'));el('jobs-status').textContent='已读取 Harness 后台任务名册';return;}
+      const names={running:'运行中',stopping:'正在停止',completed:'已完成',killed:'已取消',failed:'失败'};
+      for(const job of result.jobs){const row=document.createElement('article');row.className='session-job-row';row.append(node('strong',job.kind||'后台任务'),node('span',names[job.status]||'未知状态','badge'));if(job.progress||job.detail)row.append(node('p',job.progress||job.detail));if(job.command)row.append(node('code',job.command));row.append(node('small',`ID ${job.id}${job.retainedBytes!==null?` · 保留输出 ${job.retainedBytes.toLocaleString('zh-CN')} 字节`:''}`));target.append(row);}
+      el('jobs-status').textContent=`已读取 ${result.jobs.length} 项；只显示首个名册快照`;
+    }catch(e){if(generation===hub.detailGeneration&&hub.profile===profile){el('jobs').replaceChildren(node('p',`后台任务名册不可用：${message(e)}`,'session-empty'));el('jobs-status').textContent='读取失败；没有启动或修改任何任务。';}}
+    finally{if(generation===hub.detailGeneration&&hub.profile===profile)el('jobs-refresh').disabled=false;}
   }
   function renderCheckpoints() {
     const target=el('checkpoints');target.replaceChildren();
@@ -131,6 +144,7 @@
       hub.detail=detail;
       renderUsage(detail);
       loadSkills(id,generation);
+      loadJobs(id,profile,generation);
       el('detail-title').textContent=sessionLabel(detail.session.title)||'未命名会话';
       el('detail-meta').textContent=`${sessionLabel(detail.session.workspace)||'未分组'} · ${label(detail.session)} · ID ${id}${Number.isSafeInteger(detail.throughSeq)?` · 截至事件 ${detail.throughSeq}`:''}${detail.hasMore?'（仅最近一页）':'（历史起点已覆盖）'}`;
       for(const m of detail.messages) {
@@ -174,6 +188,7 @@
   for(const id of ['workspace','filter'])el(id).addEventListener('change',()=>{hub.page=0;render();});
   el('prev').addEventListener('click',()=>{hub.page=Math.max(0,hub.page-1);render();});el('next').addEventListener('click',()=>{hub.page++;render();});
   el('next-task').addEventListener('input',compose);
+  el('jobs-refresh').addEventListener('click',()=>loadJobs());
   el('plan-command').addEventListener('click',async()=>{
     const plan=hub.detail?.stats?.planMode;if(!plan||plan.pending)return;
     const command=plan.active?'/plan off':'/plan';

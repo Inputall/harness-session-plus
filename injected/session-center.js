@@ -105,6 +105,22 @@
       modelInvocable: skill.modelInvocable === true
     })).filter(skill => skill.name)};
   }
+  if (request.action === 'jobs') {
+    if (typeof adapter.streamFirst !== 'function') throw Error('Background-job stream unavailable');
+    const jobs = await adapter.streamFirst('job/list', {request: {sessionId: session.sessionId}}, origin);
+    const allowed = new Set(['running','stopping','completed','killed','failed']);
+    return {jobs: jobs.slice(0, 100).filter(job => job && typeof job.id === 'string' && allowed.has(job.status)).map(job => ({
+      id: job.id.slice(0, 256),
+      kind: typeof job.kind === 'string' ? job.kind.slice(0, 120) : '',
+      command: typeof job.command === 'string' ? job.command.slice(0, 2000) : '',
+      status: job.status,
+      progress: typeof job.progress === 'string' ? job.progress.slice(0, 1000) : '',
+      detail: typeof job.detail === 'string' ? job.detail.slice(0, 1000) : '',
+      startedAt: Number.isSafeInteger(job.startedAt) ? job.startedAt : null,
+      finishedAt: Number.isSafeInteger(job.finishedAt) ? job.finishedAt : null,
+      retainedBytes: Number.isSafeInteger(job.output?.total) && job.output.total >= 0 ? job.output.total : null
+    }))};
+  }
   if (request.action !== 'detail') throw Error('Unsupported read action');
   const {page,throughSeq,values,projectionState}=await history(session.sessionId);
   const messages=texts(page).map(m=>({...m,text:m.text.slice(0,6000)}));
