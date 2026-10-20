@@ -10,6 +10,7 @@ function environment(responder) {
   class Element {
     constructor(id='') {this.id=id;this.dataset={};this.children=[];this.events={};this.value='';this.disabled=false;this.hidden=false;this.checked=false;this.textContent='';this.classes=new Set();this.classList={toggle:(name,on)=>{if(on===undefined)on=!this.classes.has(name);on?this.classes.add(name):this.classes.delete(name);}};}
     addEventListener(name,fn){this.events[name]=fn;}
+    focus(){this.focused=true;}click(){return this.events.click?.({preventDefault(){}});}
     setAttribute(){} removeAttribute(){}
     append(...nodes){this.children.push(...nodes);} prepend(node){this.children.unshift(node);}
     replaceChildren(...nodes){this.children=[...nodes];} add(node){this.children.push(node);}
@@ -26,10 +27,10 @@ function environment(responder) {
   const settings={port:9223,target_id:null,executable:'C:\\Harness.exe',theme:'dark'};
   const document={getElementById:id=>elements[id],createElement:()=>new Element(),documentElement:{dataset:{}},querySelector:()=>null,querySelectorAll:selector=>({'.page':pages,'.nav-item':nav,'[data-page]':nav,'[data-nav]':navShortcuts,'[data-action]':actions}[selector]||[])};
   const invoke=async(command,args)=>{calls.push({command,args});if(command==='load_settings')return settings;if(command==='save_settings')return args.settings;return responder(command,args);};
-  const listeners={};
-  const context=vm.createContext({document,window:{confirm:()=>true,__TAURI__:{core:{invoke},event:{listen:async(name,fn)=>{listeners[name]=fn;}}}},Option:class extends Element {constructor(text,value){super();this.textContent=text;this.value=value;}},setTimeout:()=>nextTimer++,clearTimeout:()=>{},setInterval:fn=>{const id=nextTimer++;intervals.set(id,fn);return id;},clearInterval:id=>intervals.delete(id),Date,console});
+  const listeners={},windowEvents={};
+  const context=vm.createContext({document,window:{confirm:()=>true,addEventListener:(name,fn)=>{windowEvents[name]=fn;},__TAURI__:{core:{invoke},event:{listen:async(name,fn)=>{listeners[name]=fn;}}}},Option:class extends Element {constructor(text,value){super();this.textContent=text;this.value=value;}},setTimeout:()=>nextTimer++,clearTimeout:()=>{},setInterval:fn=>{const id=nextTimer++;intervals.set(id,fn);return id;},clearInterval:id=>intervals.delete(id),Date,console});
   vm.runInContext(source,context);
-  return {elements,nav,actions,calls,intervals,context,listeners,fire:async(id,event='click')=>{await elements[id].events[event]({preventDefault(){}});},settle:()=>new Promise(resolve=>setImmediate(resolve))};
+  return {elements,nav,actions,calls,intervals,context,listeners,windowEvents,fire:async(id,event='click')=>{await elements[id].events[event]({preventDefault(){}});},settle:()=>new Promise(resolve=>setImmediate(resolve))};
 }
 const diagnostic={browser:'Mock/1',injection:{installed:false,dataOperations:false},pageRecognized:true};
 test('theme UI uses neutral labels without changing stored theme identity',async()=>{
@@ -155,6 +156,30 @@ test('permanent deletion check is read-only and displays backend refusal',async(
 });
 
 const sessionSource=fs.readFileSync(path.join(__dirname,'../desktop/ui/session-center.js'),'utf8');
+test('Ctrl+K opens a searchable session switcher and selects by real session ID',async()=>{
+ const sessions=[{sessionId:'real-a',title:'Alpha task',workspace:'Workspace A',running:false,archived:false},{sessionId:'real-b',title:'Beta task',workspace:'Workspace B',running:false,archived:false}];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:sessions.find(s=>s.sessionId===args.request.sessionId),messages:[],throughSeq:1,projectionState:'sequenced',profile:'p'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs')return {jobs:[]};
+  if(command==='favorite_list')return [];
+  if(command==='session_tags_list')return [{sessionId:'real-a',tags:['focus']}];
+  if(command==='workspace_git_status')return {clean:true,branch:'main',cwd:'D:/workspace',files:[],commits:[]};
+  if(command==='checkpoint_list')return [];
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();await env.settle();
+ let prevented=false;env.windowEvents.keydown({ctrlKey:true,altKey:false,metaKey:false,key:'k',target:{matches:()=>false},preventDefault(){prevented=true;}});await env.settle();await env.settle();
+ assert.equal(prevented,true);assert.equal(env.nav.find(n=>n.dataset.page==='sessions').classes.has('active'),true);assert.equal(env.elements['session-switcher-dialog'].open,true);
+ env.elements['session-switcher-search'].value='focus';await env.fire('session-switcher-search','input');
+ assert.equal(env.elements['session-switcher-results'].children.length,1);assert.equal(env.elements['session-switcher-results'].children[0].children[0].textContent,'Alpha task');
+ env.elements['session-switcher-search'].value='beta';await env.fire('session-switcher-search','input');
+ assert.equal(env.elements['session-switcher-results'].children.length,1);
+ await env.elements['session-switcher-results'].children[0].events.click();await env.settle();
+ assert.equal(env.elements['session-switcher-dialog'].open,false);assert.equal(env.elements['session-detail-title'].textContent,'Beta task');
+ const detail=env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='detail');assert.equal(detail.args.request.sessionId,'real-b');assert.equal(detail.args.expectedProfile,'p');
+});
 test('session favorites are profile-scoped, filter by identity, and stay local',async()=>{
  const first={sessionId:'a',title:'Pinned task',workspace:'ws',running:false,archived:false};
  const second={sessionId:'b',title:'Other task',workspace:'ws',running:false,archived:false};

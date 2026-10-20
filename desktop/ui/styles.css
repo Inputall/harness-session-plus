@@ -18,6 +18,16 @@
 .session-card.batch-selected{border-color:var(--warning);box-shadow:inset 3px 0 var(--warning)}
 .session-card small{display:block;color:var(--muted);margin-top:5px}.session-id{font-size:10px}
 .session-card .session-tags-label{color:var(--brand);overflow-wrap:anywhere}
+.session-switcher-dialog{width:min(680px,calc(100vw - 36px));max-width:none;max-height:min(720px,calc(100vh - 40px));padding:0;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--text);box-shadow:0 20px 70px #0008}
+.session-switcher-dialog::backdrop{background:#060810a8;backdrop-filter:blur(2px)}
+.session-switcher-dialog .panel-heading{padding:14px 18px}.session-switcher-dialog .panel-heading h2{font-size:15px}
+.session-switcher-dialog>.session-label,.session-switcher-dialog>input{display:block;margin:14px 18px 8px}
+.session-switcher-dialog>input{width:calc(100% - 36px);background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:12px}
+.session-switcher-results{display:grid;gap:4px;padding:8px 12px;max-height:480px;overflow:auto}
+.session-switcher-option{display:block;width:100%;padding:10px 12px;text-align:left;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--text)}
+.session-switcher-option:hover,.session-switcher-option:focus-visible{background:var(--raised);border-color:var(--brand)}
+.session-switcher-option strong,.session-switcher-option small{display:block;overflow-wrap:anywhere}.session-switcher-option small{color:var(--muted);margin-top:3px}
+.session-switcher-dialog>p{padding:2px 18px 14px}
 .session-compare-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:16px}
 .session-compare-card{min-width:0;border:1px solid var(--line);border-radius:8px;padding:14px;background:var(--bg);overflow-wrap:anywhere}
 .session-compare-card h4{font-size:13px;margin:0 0 4px}.session-compare-metrics{margin:14px 0 0}

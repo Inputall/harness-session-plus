@@ -1,7 +1,7 @@
 "use strict";
 (() => {
   const hub = {sessions:[], profile:null, detail:null, gitSessionId:null, gitGeneration:0, checkpoints:[], favorites:new Set(), tags:new Map(), hits:new Map(), searchQuery:null, hasMore:false,
-    loaded:false, loading:false, generation:0, detailGeneration:0, page:0, watched:new Set(), watchBusy:false, searchInfo:'',compareMode:false,compareIds:new Set(),compareGeneration:0,batchMode:false,batchIds:new Set(),batchBusy:false};
+    loaded:false, loading:false, generation:0, detailGeneration:0, page:0, watched:new Set(), watchBusy:false, searchInfo:'',compareMode:false,compareIds:new Set(),compareGeneration:0,batchMode:false,batchIds:new Set(),batchBusy:false,switcherOpen:false};
   const el = id => document.getElementById(`session-${id}`);
   const node = (tag, text, cls) => {const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;};
   const message = error => error?.message || String(error || '操作失败，请重新检查连接。');
@@ -126,12 +126,33 @@
     }
     if(!visible.length)el('results').append(node('p','没有匹配会话。可缩小关键词，或检查工作区与状态筛选。','session-empty'));
   }
+  function renderSwitcher(){
+    if(!hub.switcherOpen)return;
+    const target=el('switcher-results'),term=el('switcher-search').value.trim().toLocaleLowerCase();target.replaceChildren();
+    if(!hub.loaded){target.append(node('p',hub.loading?'正在加载会话…':'尚未加载会话，请先刷新会话列表。','session-empty'));return;}
+    const matches=hub.sessions.filter(session=>{
+      const tags=hub.tags.get(session.sessionId)||[];
+      return `${session.title} ${session.workspace} ${session.cwd||''} ${session.sessionId} ${tags.join(' ')}`.toLocaleLowerCase().includes(term);
+    }).slice(0,30);
+    if(!matches.length){target.append(node('p','没有匹配的会话。','session-empty'));return;}
+    for(const session of matches){
+      const button=node('button','', 'session-switcher-option');button.type='button';button.setAttribute('role','option');
+      button.append(node('strong',sessionLabel(session.title)||'未命名会话'),node('small',`${sessionLabel(session.workspace)||'未分组'} · ${label(session)} · ${session.sessionId}`));
+      const tags=hub.tags.get(session.sessionId)||[];if(tags.length)button.append(node('small',tags.join(' · ')));
+      button.addEventListener('click',()=>{if(hub.batchBusy)return;hub.switcherOpen=false;el('switcher-dialog').close();clearBatch(false);clearCompare(false);select(session.sessionId);});
+      button.addEventListener('keydown',event=>{
+        if(!['ArrowDown','ArrowUp'].includes(event.key))return;event.preventDefault();
+        const options=[...target.children].filter(item=>item.className==='session-switcher-option'),index=options.indexOf(button),next=(index+(event.key==='ArrowDown'?1:options.length-1))%options.length;options[next]?.focus();
+      });
+      target.append(button);
+    }
+  }
   function updateBatchControls(){const count=hub.batchIds.size;el('batch-count').textContent=count?`已选择 ${count} 个会话`:'已选择 0 个会话';for(const id of ['batch-favorite','batch-unfavorite','batch-tag-save','batch-export'])el(id).disabled=!count||hub.batchBusy;}
   function setBatchMode(active){if(hub.batchBusy)return;if(active)clearCompare(false);clearBatch(active);render();}
   function accept(snapshot) {
     status(true,'已通过会话中心读取当前 Harness 实例。');
       if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();hub.favorites.clear();hub.tags.clear();clearBatch(false);renderWatched();clearDetail();clearCompare();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
-    hub.profile=snapshot.profile;hub.sessions=snapshot.sessions.filter(s=>s.origin!=='subagent');hub.loaded=true;loadFavorites(snapshot.profile);loadSessionTags(snapshot.profile);
+    hub.profile=snapshot.profile;hub.sessions=snapshot.sessions.filter(s=>s.origin!=='subagent');hub.loaded=true;loadFavorites(snapshot.profile);loadSessionTags(snapshot.profile);renderSwitcher();
       renderCheckpoints();
     const selected=el('workspace').value;
     el('workspace').replaceChildren(new Option('全部工作区',''));
@@ -149,15 +170,15 @@
     catch(e){toast(message(e),true);}finally{if(hub.detail?.session.sessionId===session.sessionId)el('favorite-toggle').disabled=false;}
   }
   async function loadSessionTags(profile){
-    try{const items=await invoke('session_tags_list',{profile});if(profile!==hub.profile)return;hub.tags=new Map(items.map(item=>[item.sessionId,item.tags]));render();if(hub.detail)el('tags-input').value=(hub.tags.get(hub.detail.session.sessionId)||[]).join(', ');}
-    catch(e){if(profile===hub.profile){hub.tags.clear();render();el('notification-feedback').textContent=`会话标签不可用：${message(e)}`;}}
+    try{const items=await invoke('session_tags_list',{profile});if(profile!==hub.profile)return;hub.tags=new Map(items.map(item=>[item.sessionId,item.tags]));render();renderSwitcher();if(hub.detail)el('tags-input').value=(hub.tags.get(hub.detail.session.sessionId)||[]).join(', ');}
+    catch(e){if(profile===hub.profile){hub.tags.clear();render();renderSwitcher();el('notification-feedback').textContent=`会话标签不可用：${message(e)}`;}}
   }
   async function saveSessionTags(){
     const session=hub.detail?.session,profile=hub.profile;if(!session||!profile)return;
     const raw=el('tags-input').value,values=raw.split(',').map(tag=>tag.trim()).filter(Boolean),unique=[...new Map(values.map(tag=>[tag.toLocaleLowerCase(),tag])).values()];
     if(unique.length>8||unique.some(tag=>[...tag].length>32)){toast('最多 8 个标签，每个标签不超过 32 个字符。',true);return;}
     const button=el('tags-save');button.disabled=true;
-    try{await invoke('session_tags_save',{item:{profile,sessionId:session.sessionId,tags:unique}});if(profile!==hub.profile||hub.detail?.session.sessionId!==session.sessionId)return;hub.tags.set(session.sessionId,unique);render();el('tags-input').value=unique.join(', ');toast(unique.length?'会话标签已保存。':'会话标签已清除。');}
+    try{await invoke('session_tags_save',{item:{profile,sessionId:session.sessionId,tags:unique}});if(profile!==hub.profile||hub.detail?.session.sessionId!==session.sessionId)return;hub.tags.set(session.sessionId,unique);render();renderSwitcher();el('tags-input').value=unique.join(', ');toast(unique.length?'会话标签已保存。':'会话标签已清除。');}
     catch(e){toast(message(e),true);}finally{button.disabled=!hub.detail;}
   }
   async function batchOrganize(action){
@@ -185,7 +206,7 @@
         succeeded++;
       }catch(e){failures.push(`${session.title||session.sessionId}：${message(e)}`);}
     }
-    if(hub.profile===profile){await Promise.all([loadFavorites(profile),loadSessionTags(profile)]);}
+    if(hub.profile===profile){await Promise.all([loadFavorites(profile),loadSessionTags(profile)]);renderSwitcher();}
     hub.batchBusy=false;updateBatchControls();render();
     const actionName=action==='favorite'?'收藏':action==='unfavorite'?'取消收藏':'添加标签';
     toast(`${actionName}完成 ${succeeded}/${selected.length} 项${failures.length?`；${failures.length} 项失败`:`。`}`,failures.length>0);
@@ -312,6 +333,11 @@
     finally{hub.watchBusy=false;el('watch-add').disabled=!hub.detail||hub.detail.session.archived;el('watch-stop').disabled=false;if(hub.detail)el('watch-add').textContent=hub.watched.has(hub.detail.session.sessionId)?'取消关注':'关注此会话';}
   }
   el('refresh').addEventListener('click',()=>refresh(!!el('search').value.trim()));
+  el('switcher-search').addEventListener('input',renderSwitcher);
+  el('switcher-search').addEventListener('keydown',event=>{if(event.key==='ArrowDown'){event.preventDefault();el('switcher-results').children[0]?.focus();}else if(event.key==='Enter'){event.preventDefault();el('switcher-results').children[0]?.click();}});
+  el('switcher-close').addEventListener('click',()=>el('switcher-dialog').close());
+  el('switcher-dialog').addEventListener('close',()=>{hub.switcherOpen=false;});
+  el('switcher-dialog').addEventListener('click',event=>{if(event.target===el('switcher-dialog'))el('switcher-dialog').close();});
   el('favorite-toggle').addEventListener('click',toggleFavorite);
   el('tags-save').addEventListener('click',saveSessionTags);
   el('batch-mode').addEventListener('click',()=>setBatchMode(!hub.batchMode));
@@ -348,6 +374,7 @@
   el('native').addEventListener('change',()=>{if(hub.watched.size)watch(hub.watched);});
   el('notification-test').addEventListener('click',async()=>{try{await invoke('session_notification_test');el('notification-feedback').textContent='已向 Windows 请求测试通知。若没有显示，请检查系统通知设置。';}catch(e){el('notification-feedback').textContent=message(e);}});
   window.sessionCenterOpen=()=>{loadCheckpoints();if(!hub.loaded&&!hub.loading)refresh();};
+  window.openSessionSwitcher=()=>{if(hub.batchBusy){toast('批量操作完成后再切换会话。',true);return;}hub.switcherOpen=true;el('switcher-search').value='';el('switcher-dialog').showModal();renderSwitcher();el('switcher-search').focus();};
   (async()=>{
     if(!window.__TAURI__?.event)return;
     await window.__TAURI__.event.listen('session-snapshot',e=>{if(e.payload.profile!==hub.profile)return;if(!hub.loading)accept(e.payload);});
