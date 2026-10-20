@@ -24,7 +24,7 @@
     const stats=detail.stats||{},usage=stats.tokenUsage||{},pressure=stats.contextPressure||{},models=stats.modelSelection||{};
     const fmt=n=>Number.isSafeInteger(n)?n.toLocaleString('zh-CN'):'不可用';
     const route=value=>value?`${sessionLabel(value.provider)} / ${sessionLabel(value.model)}${value.reasoningEffort?` · ${sessionLabel(value.reasoningEffort)}`:''}`:'不可用';
-    const rows=[['最近使用模型',route(models.lastUsed)],['下一次选择',route(models.next)],['未缓存输入 Token',fmt(usage.uncachedInputTokens)],['输出 Token',fmt(usage.outputTokens)],['缓存读取 Token',fmt(usage.cacheReadTokens)],['缓存写入 Token',fmt(usage.cacheWriteTokens)],['最近提示词压力',fmt(pressure.pressureTokens)],['预计下次提示词压力',fmt(pressure.projectedTokens)],['上下文窗口',fmt(pressure.contextWindow)]];
+    const rows=[['当前会话权限预设',typeof stats.permissionPreset==='string'?sessionLabel(stats.permissionPreset):'不可用'],['最近使用模型',route(models.lastUsed)],['下一次选择',route(models.next)],['未缓存输入 Token',fmt(usage.uncachedInputTokens)],['输出 Token',fmt(usage.outputTokens)],['缓存读取 Token',fmt(usage.cacheReadTokens)],['缓存写入 Token',fmt(usage.cacheWriteTokens)],['最近提示词压力',fmt(pressure.pressureTokens)],['预计下次提示词压力',fmt(pressure.projectedTokens)],['上下文窗口',fmt(pressure.contextWindow)]];
     for(const [label,value] of rows){const row=document.createElement('div');row.className='session-usage-row';row.append(node('span',label),node('strong',value));target.append(row);}
   }
   async function loadSkills(sessionId, generation) {
@@ -33,7 +33,7 @@
       if(generation!==hub.detailGeneration)return;
       const target=el('usage');const title=node('strong','可用技能');title.className='session-usage-heading';target.append(title);
       if(!result.skills.length){target.append(node('p','当前会话没有可调用技能。','session-empty'));return;}
-      for(const skill of result.skills){const row=document.createElement('div');row.className='session-usage-row';row.append(node('span',skill.name),node('strong',skill.modelInvocable?'模型可调用':'仅用户可调用'));target.append(row);}
+      for(const skill of result.skills){const row=document.createElement('div');row.className='session-skill-row';const heading=document.createElement('div');heading.className='session-usage-row';heading.append(node('span',skill.name),node('strong',skill.modelInvocable?'模型可调用':'仅用户可调用'));row.append(heading);if(skill.description)row.append(node('small',skill.description));if(skill.whenToUse)row.append(node('small',`适用场景：${skill.whenToUse}`));target.append(row);}
     }catch(e){if(generation===hub.detailGeneration){const target=el('usage');target.append(node('p',`技能清单不可用：${message(e)}`,'session-empty'));}}
   }
   function renderCheckpoints() {

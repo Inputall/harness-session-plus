@@ -161,7 +161,8 @@ test('session center searches body, copies bounded context, exports and navigate
   if(command==='session_query'){
    if(args.request.action==='list')return {sessions:[s],profile:'profile-a'};
    if(args.request.action==='search')return {sessions:[s],profile:'profile-a',hits:[{sessionId:'a',snippet:'needle in body'}],searchMode:'recent',scanned:1,hasMore:true};
-   if(args.request.action==='detail')return {session:s,messages:[{seq:1,role:'user',text:'needle in body'}],throughSeq:1,hasMore:true,profile:'profile-a'};
+   if(args.request.action==='detail')return {session:s,messages:[{seq:1,role:'user',text:'needle in body'}],throughSeq:1,hasMore:true,profile:'profile-a',projectionState:'sequenced',stats:{permissionPreset:'workspace-write',tokenUsage:{uncachedInputTokens:125,outputTokens:30},contextPressure:{pressureTokens:160},modelSelection:{lastUsed:{provider:'provider-x',model:'model-y'},next:null}}};
+   if(args.request.action==='skills')return {skills:[{name:'review',description:'Read-only review',whenToUse:'Before changes',modelInvocable:true}]};
    if(args.request.action==='open')return {opened:true};
   }
   if(command==='session_export')return 'D:/export.md';
@@ -174,7 +175,9 @@ test('session center searches body, copies bounded context, exports and navigate
  env.elements['session-search'].value='needle';await env.fire('session-search-form','submit');
  assert.match(env.elements['session-count'].textContent,/索引关闭/);
  await env.elements['session-results'].children[0].events.click();
+ await env.settle();
  assert.equal(env.elements['session-detail-title'].textContent,'编程助手 <img onerror=x>');
+ const usageText=n=>[n.textContent,...n.children.map(usageText)].join(' ');assert.match(usageText(env.elements['session-usage']),/workspace-write/);assert.match(usageText(env.elements['session-usage']),/125/);assert.match(usageText(env.elements['session-usage']),/Read-only review/);
  env.elements['session-next-task'].value='继续检查';await env.fire('session-next-task','input');await env.fire('session-copy');
  assert.match(copied,/needle in body/);assert.match(copied,/历史对话引用/);assert.match(copied,/继续检查/);
  assert(copied.includes(s.title),'Exported context must preserve the original session title');

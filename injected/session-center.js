@@ -98,12 +98,11 @@
   if (request.action === 'skills') {
     const result = await rpc('skills/list', {request: {sessionId: session.sessionId}});
     if (!Array.isArray(result?.skills)) throw Error('Unsupported skill catalog');
-    return {skills: result.skills.map(skill => ({
+    return {skills: result.skills.slice(0, 100).map(skill => ({
       name: typeof skill.name === 'string' ? skill.name.slice(0, 200) : '',
       description: typeof skill.description === 'string' ? skill.description.slice(0, 1000) : '',
       whenToUse: typeof skill.whenToUse === 'string' ? skill.whenToUse.slice(0, 1000) : '',
-      modelInvocable: skill.modelInvocable === true,
-      path: typeof skill.path === 'string' ? skill.path.slice(0, 1000) : undefined
+      modelInvocable: skill.modelInvocable === true
     })).filter(skill => skill.name)};
   }
   if (request.action !== 'detail') throw Error('Unsupported read action');
@@ -112,12 +111,15 @@
   const end = page.records.filter(r => r.type === 'event' && r.event?.type === 'turn/end').at(-1)?.event;
   const pick = (value, keys) => value && typeof value === 'object' ? Object.fromEntries(keys.filter(k => Number.isSafeInteger(value[k]) && value[k] >= 0).map(k => [k, value[k]])) : {};
   const selection = values?.modelSelection;
+  const permissionPreset = typeof values?.permissions?.currentValue === 'string' && values.permissions.currentValue.length <= 100
+    ? values.permissions.currentValue : null;
   const route = value => value && typeof value.provider === 'string' && value.provider && typeof value.model === 'string' && value.model
     ? {provider: value.provider, model: value.model, ...(typeof value.reasoningEffort === 'string' ? {reasoningEffort: value.reasoningEffort} : {})} : null;
   const stats = projectionState === 'sequenced' ? {
     tokenUsage: pick(values?.tokenUsage, ['uncachedInputTokens','outputTokens','cacheReadTokens','cacheWriteTokens']),
     contextPressure: pick(values?.contextPressure, ['pressureTokens','projectedTokens','contextWindow']),
-    modelSelection: {lastUsed: route(selection?.lastUsed), next: route(selection?.next)}
+    modelSelection: {lastUsed: route(selection?.lastUsed), next: route(selection?.next)},
+    permissionPreset
   } : null;
   return {session, messages, hasMore: page.hasMore, throughSeq, projectionState, stats,
     lastTurn: end ? {seq: end.seq, reason: end.data?.reason?.kind || 'unknown'} : null};
