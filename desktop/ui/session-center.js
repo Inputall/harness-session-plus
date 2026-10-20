@@ -27,6 +27,15 @@
     const rows=[['最近使用模型',route(models.lastUsed)],['下一次选择',route(models.next)],['未缓存输入 Token',fmt(usage.uncachedInputTokens)],['输出 Token',fmt(usage.outputTokens)],['缓存读取 Token',fmt(usage.cacheReadTokens)],['缓存写入 Token',fmt(usage.cacheWriteTokens)],['最近提示词压力',fmt(pressure.pressureTokens)],['预计下次提示词压力',fmt(pressure.projectedTokens)],['上下文窗口',fmt(pressure.contextWindow)]];
     for(const [label,value] of rows){const row=document.createElement('div');row.className='session-usage-row';row.append(node('span',label),node('strong',value));target.append(row);}
   }
+  async function loadSkills(sessionId, generation) {
+    try {
+      const result=await query({action:'skills',sessionId},hub.profile);
+      if(generation!==hub.detailGeneration)return;
+      const target=el('usage');const title=node('strong','可用技能');title.className='session-usage-heading';target.append(title);
+      if(!result.skills.length){target.append(node('p','当前会话没有可调用技能。','session-empty'));return;}
+      for(const skill of result.skills){const row=document.createElement('div');row.className='session-usage-row';row.append(node('span',skill.name),node('strong',skill.modelInvocable?'模型可调用':'仅用户可调用'));target.append(row);}
+    }catch(e){if(generation===hub.detailGeneration){const target=el('usage');target.append(node('p',`技能清单不可用：${message(e)}`,'session-empty'));}}
+  }
   function renderCheckpoints() {
     const target=el('checkpoints');target.replaceChildren();
     if(!hub.checkpoints.length){target.append(node('p','尚未保存检查点。','session-empty'));return;}
@@ -117,6 +126,7 @@
       if(generation!==hub.detailGeneration||profile!==hub.profile)return;
       hub.detail=detail;
       renderUsage(detail);
+      loadSkills(id,generation);
       el('detail-title').textContent=sessionLabel(detail.session.title)||'未命名会话';
       el('detail-meta').textContent=`${sessionLabel(detail.session.workspace)||'未分组'} · ${label(detail.session)} · ID ${id}${Number.isSafeInteger(detail.throughSeq)?` · 截至事件 ${detail.throughSeq}`:''}${detail.hasMore?'（仅最近一页）':'（历史起点已覆盖）'}`;
       for(const m of detail.messages) {

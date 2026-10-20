@@ -9,6 +9,7 @@ function env({archived=false,disabled=false,fail=false,projectionKind='sequenced
     calls.push({name,args,origin});assert.equal(origin,'http://127.0.0.1:123');
     if(name==='session/search'){if(disabled){const e=Error('gateway/internal');e.searchDisabled=true;throw e;}if(fail)throw Error('failed');return {items:[{sessionId:'a',snippet:'needle'}],hasMore:false};}
     if(name==='session/projections')return projectionKind==='sequenced'?{kind:'sequenced',asOfSeq:4,values:{tokenUsage:{uncachedInputTokens:125,outputTokens:30,cacheReadTokens:40,cacheWriteTokens:5,unexpected:999},contextPressure:{pressureTokens:170,projectedTokens:180,contextWindow:32768},modelSelection:{lastUsed:{provider:'provider-x',model:'model-y',reasoningEffort:'high',unexpected:'drop'},next:null}}}:projectionKind==='migration-required'?{kind:'migration-required',values:{tokenUsage:{uncachedInputTokens:999}}}:null;
+    if(name==='skills/list')return {skills:[{name:'review',description:'Review files',modelInvocable:true,path:'C:\\skills\\review.md'},{name:'hidden',description:'',modelInvocable:false,extra:'drop'}]};
     if(name==='session/page'){assert.equal(args.request.address.kind,'session');assert.equal(args.request.maxMessages,20);return {records,hasMore:false};}
     throw Error('Unexpected endpoint '+name);
   }};
@@ -29,6 +30,11 @@ test('migration-required projections never expose cached values as live statisti
   const e=env({projectionKind:'migration-required'}),d=await e.run({action:'detail',sessionId:'a'});
   assert.equal(d.projectionState,'migration-required');assert.equal(d.stats,null);assert.equal(d.messages.length,0);assert.equal(d.hasMore,true);
   assert(!e.calls.some(c=>c.name==='session/page'));
+});
+test('skills catalog is read-only, session-bound, and metadata is bounded',async()=>{
+  const e=env(),r=await e.run({action:'skills',sessionId:'b'});
+  assert.deepEqual(JSON.parse(JSON.stringify(r.skills)),[{name:'review',description:'Review files',whenToUse:'',modelInvocable:true,path:'C:\\skills\\review.md'},{name:'hidden',description:'',whenToUse:'',modelInvocable:false}]);
+  const call=e.calls.find(c=>c.name==='skills/list');assert.equal(call.args.request.sessionId,'b');
 });
 test('disabled index falls back to bounded recent pages; arbitrary failures never silently fall back',async()=>{
   const e=env({disabled:true}),r=await e.run({action:'search',query:'needle'});assert.equal(r.searchMode,'recent');assert.equal(r.scanned,2);assert.equal(r.hits.length,2);assert.equal(r.failed,0);

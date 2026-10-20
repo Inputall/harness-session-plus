@@ -95,6 +95,17 @@
     browser.open(session.sessionId);
     return {opened: true};
   }
+  if (request.action === 'skills') {
+    const result = await rpc('skills/list', {request: {sessionId: session.sessionId}});
+    if (!Array.isArray(result?.skills)) throw Error('Unsupported skill catalog');
+    return {skills: result.skills.map(skill => ({
+      name: typeof skill.name === 'string' ? skill.name.slice(0, 200) : '',
+      description: typeof skill.description === 'string' ? skill.description.slice(0, 1000) : '',
+      whenToUse: typeof skill.whenToUse === 'string' ? skill.whenToUse.slice(0, 1000) : '',
+      modelInvocable: skill.modelInvocable === true,
+      path: typeof skill.path === 'string' ? skill.path.slice(0, 1000) : undefined
+    })).filter(skill => skill.name)};
+  }
   if (request.action !== 'detail') throw Error('Unsupported read action');
   const {page,throughSeq,values,projectionState}=await history(session.sessionId);
   const messages=texts(page).map(m=>({...m,text:m.text.slice(0,6000)}));
