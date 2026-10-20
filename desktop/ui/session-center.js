@@ -126,8 +126,8 @@
     }
     if(!visible.length)el('results').append(node('p','没有匹配会话。可缩小关键词，或检查工作区与状态筛选。','session-empty'));
   }
-  function updateBatchControls(){const count=hub.batchIds.size;el('batch-count').textContent=count?`已选择 ${count} 个会话`:'已选择 0 个会话';for(const id of ['batch-favorite','batch-unfavorite','batch-tag-save'])el(id).disabled=!count||hub.batchBusy;}
-  function setBatchMode(active){if(active)clearCompare(false);clearBatch(active);render();}
+  function updateBatchControls(){const count=hub.batchIds.size;el('batch-count').textContent=count?`已选择 ${count} 个会话`:'已选择 0 个会话';for(const id of ['batch-favorite','batch-unfavorite','batch-tag-save','batch-export'])el(id).disabled=!count||hub.batchBusy;}
+  function setBatchMode(active){if(hub.batchBusy)return;if(active)clearCompare(false);clearBatch(active);render();}
   function accept(snapshot) {
     status(true,'已通过会话中心读取当前 Harness 实例。');
       if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();hub.favorites.clear();hub.tags.clear();clearBatch(false);renderWatched();clearDetail();clearCompare();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
@@ -191,8 +191,42 @@
     toast(`${actionName}完成 ${succeeded}/${selected.length} 项${failures.length?`；${failures.length} 项失败`:`。`}`,failures.length>0);
     if(failures.length)el('notification-feedback').textContent=failures.slice(0,3).join('\n');
   }
+  async function batchExport(){
+    const ids=[...hub.batchIds],profile=hub.profile;
+    if(!ids.length||!profile||hub.batchBusy)return;
+    if(ids.length>10){toast('批量上下文导出最多选择 10 个会话。',true);return;}
+    const selected=ids.map(id=>hub.sessions.find(s=>s.sessionId===id)).filter(Boolean);
+    if(selected.length!==ids.length){toast('会话列表已变化，请刷新后重新选择。',true);return;}
+    hub.batchBusy=true;updateBatchControls();el('batch-count').textContent=`正在读取 0/${selected.length} 个会话…`;
+    const sections=[],failures=[];
+    try{
+      for(let index=0;index<selected.length;index++){
+        if(hub.profile!==profile)throw Error('Harness profile 已改变，已停止后续读取。');
+        const session=selected[index];
+        try{
+          const detail=await query({action:'detail',sessionId:session.sessionId},profile);
+          if(detail.projectionState!=='sequenced')throw Error('没有可验证的消息序号，未导出该会话内容。');
+          const messages=detail.messages.filter(item=>['user','assistant'].includes(item.role));
+          const excerpt=messages.map(item=>{
+            const content=String(item.text||'');
+            const bounded=content.length>3000?`${content.slice(0,3000)}\n[消息已截断]`:content;
+            return `### ${item.role==='user'?'用户':'助手'} · #${item.seq}\n\n${bounded}`;
+          }).join('\n\n');
+          sections.push(`## ${session.title||'未命名会话'}\n\n- 会话 ID：${session.sessionId}\n- 工作区：${session.workspace||'未分组'}\n- 截止事件：${Number.isSafeInteger(detail.throughSeq)?detail.throughSeq:'不可用'}\n- 摘录范围：${detail.hasMore?'最近一页，仍有更早记录':'本次返回的历史范围'}\n\n${excerpt||'（没有可导出的用户/助手文本消息）'}`);
+        }catch(e){failures.push(`${session.title||session.sessionId}：${message(e)}`);}
+        el('batch-count').textContent=`正在读取 ${index+1}/${selected.length} 个会话…`;
+      }
+      if(!sections.length)throw Error('所选会话均未取得可验证的消息摘录，没有生成文件。');
+      const content=`# 会话上下文汇总\n\n导出时间：${new Date().toLocaleString('zh-CN')}\n\n仅包含通过 Harness 持久投影读取的用户/助手文本摘录；不包含附件、工具输出或推理内容。每条消息最多 3000 个 UTF-16 单元，内容可能截断。该文件是历史引用，不代表项目当前状态或任务已完成。\n\n${sections.join('\n\n---\n\n')}`;
+      if(content.length>950000)throw Error('汇总内容超过导出上限，请减少会话数量或缩小每个会话摘录。');
+      const path=await invoke('session_export',{content});
+      toast(`已导出 ${sections.length} 个会话上下文：${path}${failures.length?`；${failures.length} 项读取失败`:''}`,failures.length>0);
+      if(failures.length)el('notification-feedback').textContent=failures.slice(0,3).join('\n');
+    }catch(e){toast(message(e),true);}
+    finally{hub.batchBusy=false;updateBatchControls();render();}
+  }
   async function refresh(search=false) {
-    if(hub.loading)return;
+    if(hub.loading||hub.batchBusy)return;
     hub.loading=true;const generation=++hub.generation;clearDetail();clearBatch(false);clearCompare();error('');
     el('refresh').disabled=true;el('search-button').disabled=true;
     const term=el('search').value.trim();
@@ -284,7 +318,8 @@
   el('batch-favorite').addEventListener('click',()=>batchOrganize('favorite'));
   el('batch-unfavorite').addEventListener('click',()=>batchOrganize('unfavorite'));
   el('batch-tag-save').addEventListener('click',()=>batchOrganize('tags'));
-  el('compare-mode').addEventListener('click',()=>{if(!hub.compareMode)clearBatch(false);clearCompare(!hub.compareMode);render();});
+  el('batch-export').addEventListener('click',batchExport);
+  el('compare-mode').addEventListener('click',()=>{if(hub.batchBusy)return;if(!hub.compareMode)clearBatch(false);clearCompare(!hub.compareMode);render();});
   el('compare-run').addEventListener('click',compareSelected);
   el('search-form').addEventListener('submit',e=>{e.preventDefault();return refresh(true);});
   el('search').addEventListener('input',()=>{hub.page=0;hub.hasMore=false;hub.searchInfo='';render();});

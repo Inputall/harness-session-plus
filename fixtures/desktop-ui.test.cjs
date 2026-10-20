@@ -233,6 +233,21 @@ test('batch tag limit failure leaves existing tags intact and continues other se
  assert.deepEqual(Array.from(tags.find(x=>x.sessionId==='a').tags),['urgent']);assert.deepEqual(Array.from(tags.find(x=>x.sessionId==='b').tags),Array.from({length:8},(_,i)=>`tag${i}`));
  assert.match(env.elements['session-notification-feedback'].textContent,/Task b/);
 });
+test('batch context export writes one bounded markdown file and skips unsequenced sessions',async()=>{
+ const sessions=['a','b'].map(id=>({sessionId:id,title:`Task ${id}`,workspace:'ws',running:false,archived:false}));let exported;
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return args.request.sessionId==='a'?{session:sessions[0],messages:[{seq:4,role:'user',text:'verified question'},{seq:5,role:'tool',text:'hidden tool'}],throughSeq:5,hasMore:true,projectionState:'sequenced',profile:'p'}:{session:sessions[1],messages:[{seq:2,role:'assistant',text:'unverified'}],projectionState:'unavailable',profile:'p'};
+  if(command==='session_export'){exported=args.content;return 'D:/exports/batch.md';}
+  if(command==='favorite_list')return [];
+  if(command==='session_tags_list')return [];
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();await env.settle();await env.fire('session-batch-mode');
+ const rows=()=>env.elements['session-results'].children.filter(x=>x.dataset.sessionId);await rows()[0].events.click();await rows()[1].events.click();await env.fire('session-batch-export');
+ assert.match(exported,/Task a/);assert.match(exported,/verified question/);assert.match(exported,/截止事件：5/);assert.doesNotMatch(exported,/hidden tool|unverified/);
+ assert.equal(env.calls.filter(c=>c.command==='session_export').length,1);assert.equal(env.calls.filter(c=>c.command==='session_query'&&c.args.request.action==='detail').length,2);
+});
 test('session comparison is profile-bound, read-only and limited to two sessions',async()=>{
  const sessions=['a','b','c'].map((id,i)=>({sessionId:id,title:`Task ${id}`,workspace:'ws',running:false,archived:false}));
  const detailCalls=[];
