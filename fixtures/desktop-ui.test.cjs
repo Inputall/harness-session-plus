@@ -178,6 +178,7 @@ test('session center searches body, copies bounded context, exports and navigate
  await env.settle();
  assert.equal(env.elements['session-detail-title'].textContent,'编程助手 <img onerror=x>');
  const usageText=n=>[n.textContent,...n.children.map(usageText)].join(' ');assert.match(usageText(env.elements['session-usage']),/workspace-write/);assert.match(usageText(env.elements['session-usage']),/计划模式/);assert.match(usageText(env.elements['session-usage']),/125/);assert.match(usageText(env.elements['session-usage']),/Read-only review/);
+ assert.equal(env.elements['session-plan-command'].disabled,false);await env.fire('session-plan-command');assert.equal(copied,'/plan off');
  env.elements['session-next-task'].value='继续检查';await env.fire('session-next-task','input');await env.fire('session-copy');
  assert.match(copied,/needle in body/);assert.match(copied,/历史对话引用/);assert.match(copied,/继续检查/);
  assert(copied.includes(s.title),'Exported context must preserve the original session title');
