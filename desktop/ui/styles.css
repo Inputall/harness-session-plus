@@ -15,6 +15,7 @@
 .session-card{display:block;width:100%;text-align:left;border:1px solid var(--line);background:var(--card);color:var(--text);padding:14px;border-radius:10px;overflow-wrap:anywhere}
 .session-card.selected,.session-card:hover{border-color:var(--brand);background:var(--raised)}
 .session-card.compare-selected{border-color:var(--success);box-shadow:inset 3px 0 var(--success)}
+.session-card.batch-selected{border-color:var(--warning);box-shadow:inset 3px 0 var(--warning)}
 .session-card small{display:block;color:var(--muted);margin-top:5px}.session-id{font-size:10px}
 .session-card .session-tags-label{color:var(--brand);overflow-wrap:anywhere}
 .session-compare-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:16px}

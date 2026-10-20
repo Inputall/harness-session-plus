@@ -193,6 +193,46 @@ test('session tags save locally, search by tag and clear without mutating sessio
  env.elements['session-tags-input'].value='';await env.fire('session-tags-save');assert.equal(tags.length,0);
  assert(env.calls.every(c=>!['delete_sessions','archive_session','restore_session'].includes(c.command)));
 });
+test('batch organizer applies favorites and additive tags per session without entering compare mode',async()=>{
+ const sessions=['a','b'].map((id,i)=>({sessionId:id,title:`Task ${id}`,workspace:'ws',running:false,archived:false}));
+ let favorites=[],tags=[];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:sessions.find(s=>s.sessionId===args.request.sessionId),messages:[],throughSeq:1,profile:'p'};
+  if(command==='favorite_list')return favorites;
+  if(command==='favorite_toggle'){const id=args.favorite.sessionId;favorites=favorites.some(x=>x.sessionId===id)?favorites.filter(x=>x.sessionId!==id):[...favorites,args.favorite];return favorites.some(x=>x.sessionId===id);}
+  if(command==='session_tags_list')return tags;
+  if(command==='session_tags_save'){tags=tags.filter(x=>x.sessionId!==args.item.sessionId);if(args.item.tags.length)tags.push(args.item);return null;}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();await env.settle();
+ await env.fire('session-batch-mode');
+ const rows=()=>env.elements['session-results'].children.filter(x=>x.dataset.sessionId);
+ await rows()[0].events.click();await rows()[1].events.click();assert.equal(env.elements['session-batch-count'].textContent,'已选择 2 个会话');
+ await env.fire('session-batch-favorite');assert.equal(favorites.length,2);
+ env.elements['session-batch-tags'].value='release, urgent';await env.fire('session-batch-tag-save');assert.equal(tags.length,2);assert.deepEqual(Array.from(tags[0].tags),['release','urgent']);
+ assert.equal(env.elements['session-compare-run'].disabled,true);assert.equal(env.elements['session-batch-actions'].hidden,false);
+ await env.fire('session-batch-unfavorite');assert.equal(favorites.length,0);
+ await env.fire('session-batch-mode');assert.equal(env.elements['session-batch-actions'].hidden,true);
+ assert(env.calls.every(c=>!['delete_sessions','archive_session','restore_session'].includes(c.command)));
+});
+test('batch tag limit failure leaves existing tags intact and continues other sessions',async()=>{
+ const sessions=['a','b'].map(id=>({sessionId:id,title:`Task ${id}`,workspace:'ws',running:false,archived:false}));
+ let tags=[{profile:'p',sessionId:'b',tags:Array.from({length:8},(_,i)=>`tag${i}`)}];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:sessions.find(s=>s.sessionId===args.request.sessionId),messages:[],throughSeq:1,profile:'p'};
+  if(command==='favorite_list')return [];
+  if(command==='session_tags_list')return tags;
+  if(command==='session_tags_save'){tags=tags.filter(x=>x.sessionId!==args.item.sessionId);if(args.item.tags.length)tags.push(args.item);return null;}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();await env.settle();
+ await env.fire('session-batch-mode');const rows=()=>env.elements['session-results'].children.filter(x=>x.dataset.sessionId);await rows()[0].events.click();await rows()[1].events.click();
+ env.elements['session-batch-tags'].value='urgent';await env.fire('session-batch-tag-save');
+ assert.deepEqual(Array.from(tags.find(x=>x.sessionId==='a').tags),['urgent']);assert.deepEqual(Array.from(tags.find(x=>x.sessionId==='b').tags),Array.from({length:8},(_,i)=>`tag${i}`));
+ assert.match(env.elements['session-notification-feedback'].textContent,/Task b/);
+});
 test('session comparison is profile-bound, read-only and limited to two sessions',async()=>{
  const sessions=['a','b','c'].map((id,i)=>({sessionId:id,title:`Task ${id}`,workspace:'ws',running:false,archived:false}));
  const detailCalls=[];

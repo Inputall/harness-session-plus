@@ -1,14 +1,15 @@
 "use strict";
 (() => {
   const hub = {sessions:[], profile:null, detail:null, gitSessionId:null, gitGeneration:0, checkpoints:[], favorites:new Set(), tags:new Map(), hits:new Map(), searchQuery:null, hasMore:false,
-    loaded:false, loading:false, generation:0, detailGeneration:0, page:0, watched:new Set(), watchBusy:false, searchInfo:'',compareMode:false,compareIds:new Set(),compareGeneration:0};
+    loaded:false, loading:false, generation:0, detailGeneration:0, page:0, watched:new Set(), watchBusy:false, searchInfo:'',compareMode:false,compareIds:new Set(),compareGeneration:0,batchMode:false,batchIds:new Set(),batchBusy:false};
   const el = id => document.getElementById(`session-${id}`);
   const node = (tag, text, cls) => {const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;};
   const message = error => error?.message || String(error || '操作失败，请重新检查连接。');
   const query = (request, profile=hub.profile) => invoke('session_query',{request,expectedProfile:profile});
   const label = s => s.archived?'已归档':s.pending==='approval'?'等待审批':s.pending==='question'?'等待回答':s.pending==='plan-review'?'等待计划审阅':s.running===true?'运行中':s.running===false?'未运行':'运行状态未知';
   function error(value) {el('error').hidden=!value;el('error').textContent=value||'';}
-  function clearCompare(mode=false){hub.compareGeneration++;hub.compareMode=mode;hub.compareIds.clear();el('compare-panel').hidden=true;el('compare-results').replaceChildren(node('p','选择两个会话后查看并排指标。','session-empty'));el('compare-status').textContent=mode?'已选择 0/2 个会话':'选择两个会话后比较';el('compare-mode').textContent=mode?'退出比较选择':'选择会话比较';el('compare-run').disabled=true;}
+  function clearBatch(mode=false){hub.batchMode=mode;hub.batchIds.clear();el('batch-mode').textContent=mode?'退出批量整理':'批量整理';el('batch-actions').hidden=!mode;el('batch-count').textContent=mode?'已选择 0 个会话':'未选择会话';for(const id of ['batch-favorite','batch-unfavorite','batch-tag-save'])el(id).disabled=true;}
+  function clearCompare(mode=false){hub.compareGeneration++;hub.compareMode=mode;hub.compareIds.clear();if(mode)clearBatch(false);el('compare-panel').hidden=true;el('compare-results').replaceChildren(node('p','选择两个会话后查看并排指标。','session-empty'));el('compare-status').textContent=mode?'已选择 0/2 个会话':'选择两个会话后比较';el('compare-mode').textContent=mode?'退出比较选择':'选择会话比较';el('compare-run').disabled=true;}
   function clearDetail() {
     hub.detail=null;hub.detailGeneration++;
     el('detail-title').textContent='选择一个会话';el('detail-meta').textContent='查看真实消息摘录，再生成继续任务提示词。';
@@ -103,7 +104,8 @@
     el('results').replaceChildren();
     for(const s of visible.slice(hub.page*30,(hub.page+1)*30)) {
       const sessionTags=hub.tags.get(s.sessionId)||[];
-      const button=node('button','',`session-card${hub.detail?.session.sessionId===s.sessionId?' selected':''}${hub.compareIds.has(s.sessionId)?' compare-selected':''}`);
+      const batchSelected=hub.batchIds.has(s.sessionId),compareSelected=hub.compareIds.has(s.sessionId);
+      const button=node('button','',`session-card${hub.detail?.session.sessionId===s.sessionId?' selected':''}${compareSelected?' compare-selected':''}${batchSelected?' batch-selected':''}`);
       button.dataset.sessionId=s.sessionId;
       button.type='button';button.append(node('strong',sessionLabel(s.title)||'未命名会话'),node('small',`${sessionLabel(s.workspace)||'未分组'} · ${label(s)}`));
       button.append(node('small',s.sessionId,'session-id'));
@@ -113,6 +115,7 @@
       const snippet=hub.searchQuery===text?hub.hits.get(s.sessionId):null;
       if(snippet)button.append(node('p',snippet,'session-hit'));
       button.addEventListener('click',()=>{
+        if(hub.batchMode){if(batchSelected)hub.batchIds.delete(s.sessionId);else if(hub.batchIds.size<100)hub.batchIds.add(s.sessionId);else{toast('一次最多整理 100 个会话。');return;}updateBatchControls();render();return;}
         if(!hub.compareMode){select(s.sessionId);return;}
         if(hub.compareIds.has(s.sessionId))hub.compareIds.delete(s.sessionId);
         else if(hub.compareIds.size<2)hub.compareIds.add(s.sessionId);
@@ -123,9 +126,11 @@
     }
     if(!visible.length)el('results').append(node('p','没有匹配会话。可缩小关键词，或检查工作区与状态筛选。','session-empty'));
   }
+  function updateBatchControls(){const count=hub.batchIds.size;el('batch-count').textContent=count?`已选择 ${count} 个会话`:'已选择 0 个会话';for(const id of ['batch-favorite','batch-unfavorite','batch-tag-save'])el(id).disabled=!count||hub.batchBusy;}
+  function setBatchMode(active){if(active)clearCompare(false);clearBatch(active);render();}
   function accept(snapshot) {
     status(true,'已通过会话中心读取当前 Harness 实例。');
-      if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();hub.favorites.clear();hub.tags.clear();renderWatched();clearDetail();clearCompare();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
+      if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();hub.favorites.clear();hub.tags.clear();clearBatch(false);renderWatched();clearDetail();clearCompare();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
     hub.profile=snapshot.profile;hub.sessions=snapshot.sessions.filter(s=>s.origin!=='subagent');hub.loaded=true;loadFavorites(snapshot.profile);loadSessionTags(snapshot.profile);
       renderCheckpoints();
     const selected=el('workspace').value;
@@ -155,9 +160,40 @@
     try{await invoke('session_tags_save',{item:{profile,sessionId:session.sessionId,tags:unique}});if(profile!==hub.profile||hub.detail?.session.sessionId!==session.sessionId)return;hub.tags.set(session.sessionId,unique);render();el('tags-input').value=unique.join(', ');toast(unique.length?'会话标签已保存。':'会话标签已清除。');}
     catch(e){toast(message(e),true);}finally{button.disabled=!hub.detail;}
   }
+  async function batchOrganize(action){
+    const ids=[...hub.batchIds],profile=hub.profile;
+    if(!ids.length||!profile||hub.batchBusy)return;
+    const selected=ids.map(id=>hub.sessions.find(s=>s.sessionId===id)).filter(Boolean);
+    if(selected.length!==ids.length){toast('会话列表已变化，请刷新后重新选择。',true);return;}
+    const newTags=el('batch-tags').value.split(',').map(tag=>tag.trim()).filter(Boolean);
+    const uniqueTags=[...new Map(newTags.map(tag=>[tag.toLocaleLowerCase(),tag])).values()];
+    if(action==='tags'&&(!uniqueTags.length||uniqueTags.length>8||uniqueTags.some(tag=>[...tag].length>32))){toast('请填写 1 至 8 个标签，每个不超过 32 个字符。',true);return;}
+    hub.batchBusy=true;updateBatchControls();
+    let succeeded=0;const failures=[];
+    for(const session of selected){
+      if(hub.profile!==profile)break;
+      try{
+        if(action==='favorite'||action==='unfavorite'){
+          const has=hub.favorites.has(session.sessionId),want=action==='favorite';
+          if(has!==want)await invoke('favorite_toggle',{favorite:{profile,sessionId:session.sessionId,title:session.title||'',workspace:session.workspace||'',updatedAt:Date.now()}});
+        }else{
+          const current=hub.tags.get(session.sessionId)||[],merged=[...current];
+          for(const tag of uniqueTags)if(!merged.some(value=>value.toLocaleLowerCase()===tag.toLocaleLowerCase()))merged.push(tag);
+          if(merged.length>8)throw Error('该会话已有标签，添加后会超过 8 个上限。');
+          await invoke('session_tags_save',{item:{profile,sessionId:session.sessionId,tags:merged}});
+        }
+        succeeded++;
+      }catch(e){failures.push(`${session.title||session.sessionId}：${message(e)}`);}
+    }
+    if(hub.profile===profile){await Promise.all([loadFavorites(profile),loadSessionTags(profile)]);}
+    hub.batchBusy=false;updateBatchControls();render();
+    const actionName=action==='favorite'?'收藏':action==='unfavorite'?'取消收藏':'添加标签';
+    toast(`${actionName}完成 ${succeeded}/${selected.length} 项${failures.length?`；${failures.length} 项失败`:`。`}`,failures.length>0);
+    if(failures.length)el('notification-feedback').textContent=failures.slice(0,3).join('\n');
+  }
   async function refresh(search=false) {
     if(hub.loading)return;
-    hub.loading=true;const generation=++hub.generation;clearDetail();clearCompare();error('');
+    hub.loading=true;const generation=++hub.generation;clearDetail();clearBatch(false);clearCompare();error('');
     el('refresh').disabled=true;el('search-button').disabled=true;
     const term=el('search').value.trim();
     try {
@@ -244,7 +280,11 @@
   el('refresh').addEventListener('click',()=>refresh(!!el('search').value.trim()));
   el('favorite-toggle').addEventListener('click',toggleFavorite);
   el('tags-save').addEventListener('click',saveSessionTags);
-  el('compare-mode').addEventListener('click',()=>clearCompare(!hub.compareMode));
+  el('batch-mode').addEventListener('click',()=>setBatchMode(!hub.batchMode));
+  el('batch-favorite').addEventListener('click',()=>batchOrganize('favorite'));
+  el('batch-unfavorite').addEventListener('click',()=>batchOrganize('unfavorite'));
+  el('batch-tag-save').addEventListener('click',()=>batchOrganize('tags'));
+  el('compare-mode').addEventListener('click',()=>{if(!hub.compareMode)clearBatch(false);clearCompare(!hub.compareMode);render();});
   el('compare-run').addEventListener('click',compareSelected);
   el('search-form').addEventListener('submit',e=>{e.preventDefault();return refresh(true);});
   el('search').addEventListener('input',()=>{hub.page=0;hub.hasMore=false;hub.searchInfo='';render();});
