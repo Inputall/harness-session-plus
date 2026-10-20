@@ -1,13 +1,14 @@
 "use strict";
 (() => {
   const hub = {sessions:[], profile:null, detail:null, gitSessionId:null, gitGeneration:0, checkpoints:[], hits:new Map(), searchQuery:null, hasMore:false,
-    loaded:false, loading:false, generation:0, detailGeneration:0, page:0, watched:new Set(), watchBusy:false, searchInfo:''};
+    loaded:false, loading:false, generation:0, detailGeneration:0, page:0, watched:new Set(), watchBusy:false, searchInfo:'',compareMode:false,compareIds:new Set(),compareGeneration:0};
   const el = id => document.getElementById(`session-${id}`);
   const node = (tag, text, cls) => {const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;};
   const message = error => error?.message || String(error || '操作失败，请重新检查连接。');
   const query = (request, profile=hub.profile) => invoke('session_query',{request,expectedProfile:profile});
   const label = s => s.archived?'已归档':s.pending==='approval'?'等待审批':s.pending==='question'?'等待回答':s.pending==='plan-review'?'等待计划审阅':s.running===true?'运行中':s.running===false?'未运行':'运行状态未知';
   function error(value) {el('error').hidden=!value;el('error').textContent=value||'';}
+  function clearCompare(mode=false){hub.compareGeneration++;hub.compareMode=mode;hub.compareIds.clear();el('compare-panel').hidden=true;el('compare-results').replaceChildren(node('p','选择两个会话后查看并排指标。','session-empty'));el('compare-status').textContent=mode?'已选择 0/2 个会话':'选择两个会话后比较';el('compare-mode').textContent=mode?'退出比较选择':'选择会话比较';el('compare-run').disabled=true;}
   function clearDetail() {
     hub.detail=null;hub.detailGeneration++;
     el('detail-title').textContent='选择一个会话';el('detail-meta').textContent='查看真实消息摘录，再生成继续任务提示词。';
@@ -99,20 +100,27 @@
     el('prev').disabled=hub.page===0;el('next').disabled=hub.page+1>=pages;
     el('results').replaceChildren();
     for(const s of visible.slice(hub.page*30,(hub.page+1)*30)) {
-      const button=node('button','',`session-card${hub.detail?.session.sessionId===s.sessionId?' selected':''}`);
+      const button=node('button','',`session-card${hub.detail?.session.sessionId===s.sessionId?' selected':''}${hub.compareIds.has(s.sessionId)?' compare-selected':''}`);
       button.dataset.sessionId=s.sessionId;
       button.type='button';button.append(node('strong',sessionLabel(s.title)||'未命名会话'),node('small',`${sessionLabel(s.workspace)||'未分组'} · ${label(s)}`));
       button.append(node('small',s.sessionId,'session-id'));
       if(!s.statusObserved&&!s.archived)button.append(node('small','等待状态未观测','subtle'));
       const snippet=hub.searchQuery===text?hub.hits.get(s.sessionId):null;
       if(snippet)button.append(node('p',snippet,'session-hit'));
-      button.addEventListener('click',()=>select(s.sessionId));el('results').append(button);
+      button.addEventListener('click',()=>{
+        if(!hub.compareMode){select(s.sessionId);return;}
+        if(hub.compareIds.has(s.sessionId))hub.compareIds.delete(s.sessionId);
+        else if(hub.compareIds.size<2)hub.compareIds.add(s.sessionId);
+        else {toast('一次最多比较两个会话。');return;}
+        hub.compareGeneration++;el('compare-panel').hidden=true;el('compare-status').textContent=`已选择 ${hub.compareIds.size}/2 个会话`;
+        el('compare-run').disabled=hub.compareIds.size!==2;render();
+      });el('results').append(button);
     }
     if(!visible.length)el('results').append(node('p','没有匹配会话。可缩小关键词，或检查工作区与状态筛选。','session-empty'));
   }
   function accept(snapshot) {
     status(true,'已通过会话中心读取当前 Harness 实例。');
-      if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();renderWatched();clearDetail();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
+      if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();renderWatched();clearDetail();clearCompare();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
     hub.profile=snapshot.profile;hub.sessions=snapshot.sessions.filter(s=>s.origin!=='subagent');hub.loaded=true;
       renderCheckpoints();
     const selected=el('workspace').value;
@@ -123,7 +131,7 @@
   }
   async function refresh(search=false) {
     if(hub.loading)return;
-    hub.loading=true;const generation=++hub.generation;clearDetail();error('');
+    hub.loading=true;const generation=++hub.generation;clearDetail();clearCompare();error('');
     el('refresh').disabled=true;el('search-button').disabled=true;
     const term=el('search').value.trim();
     try {
@@ -134,6 +142,30 @@
       hub.page=0;accept(snapshot);
     }catch(e){if(generation===hub.generation){hub.loaded=false;error(message(e));}}
     finally {hub.loading=false;el('refresh').disabled=false;el('search-button').disabled=false;}
+  }
+  function renderComparison(items){
+    const target=el('compare-results');target.replaceChildren();
+    for(const detail of items){
+      const card=document.createElement('article');card.className='session-compare-card';
+      const title=hub.sessions.find(s=>s.sessionId===detail.session.sessionId)?.title||detail.session.title||'未命名会话';
+      card.append(node('h4',sessionLabel(title)),node('small',`${sessionLabel(detail.session.workspace)||'未分组'} · ${detail.session.sessionId}`,'session-id'));
+      const stats=detail.projectionState==='sequenced'?detail.stats||{}:{};
+      const route=stats.modelSelection?.lastUsed;
+      const plan=stats.planMode;
+      const fields=[['状态',label(detail.session)],['最近模型',route?`${sessionLabel(route.provider)} / ${sessionLabel(route.model)}`:'不可用'],['权限预设',typeof stats.permissionPreset==='string'?sessionLabel(stats.permissionPreset):'不可用'],['协作模式',!plan?'不可用':plan.pending?'变更待生效':plan.active?'计划模式':'普通执行模式'],['输入 Token',Number.isSafeInteger(stats.tokenUsage?.uncachedInputTokens)?stats.tokenUsage.uncachedInputTokens.toLocaleString('zh-CN'):'不可用'],['输出 Token',Number.isSafeInteger(stats.tokenUsage?.outputTokens)?stats.tokenUsage.outputTokens.toLocaleString('zh-CN'):'不可用']];
+      const list=document.createElement('dl');list.className='session-compare-metrics';
+      for(const [key,value] of fields){const row=document.createElement('div');row.className='session-compare-metric';row.append(node('dt',key),node('dd',value));list.append(row);}card.append(list);target.append(card);
+    }
+    el('compare-panel').hidden=false;el('compare-status').textContent='当前 profile · Harness 持久投影；缺失项标记为不可用';
+  }
+  async function compareSelected(){
+    if(hub.compareIds.size!==2||!hub.profile)return;
+    const ids=[...hub.compareIds],profile=hub.profile,generation=++hub.compareGeneration;
+    if(ids.some(id=>!hub.sessions.some(s=>s.sessionId===id)))return clearCompare(true);
+    el('compare-run').disabled=true;el('compare-panel').hidden=false;el('compare-status').textContent='正在读取两个会话的持久投影…';el('compare-results').replaceChildren(node('p','正在读取比较数据…','session-empty'));
+    try{const values=await Promise.all(ids.map(sessionId=>query({action:'detail',sessionId},profile)));if(generation!==hub.compareGeneration||profile!==hub.profile)return;renderComparison(values);}
+    catch(e){if(generation===hub.compareGeneration&&profile===hub.profile){el('compare-results').replaceChildren(node('p',`比较数据读取失败：${message(e)}`,'session-empty'));el('compare-status').textContent='读取失败；已保留选择，可重试。';}}
+    finally{if(generation===hub.compareGeneration&&profile===hub.profile)el('compare-run').disabled=hub.compareIds.size!==2;}
   }
   async function select(id) {
     clearDetail();const generation=hub.detailGeneration, profile=hub.profile;
@@ -182,6 +214,8 @@
     finally{hub.watchBusy=false;el('watch-add').disabled=!hub.detail||hub.detail.session.archived;el('watch-stop').disabled=false;if(hub.detail)el('watch-add').textContent=hub.watched.has(hub.detail.session.sessionId)?'取消关注':'关注此会话';}
   }
   el('refresh').addEventListener('click',()=>refresh(!!el('search').value.trim()));
+  el('compare-mode').addEventListener('click',()=>clearCompare(!hub.compareMode));
+  el('compare-run').addEventListener('click',compareSelected);
   el('search-form').addEventListener('submit',e=>{e.preventDefault();return refresh(true);});
   el('search').addEventListener('input',()=>{hub.page=0;hub.hasMore=false;hub.searchInfo='';render();});
   el('clear').addEventListener('click',()=>{el('search').value='';hub.searchQuery=null;hub.hits.clear();hub.hasMore=false;hub.searchInfo='';hub.page=0;render();});

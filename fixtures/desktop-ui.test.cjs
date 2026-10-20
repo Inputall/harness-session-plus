@@ -155,6 +155,32 @@ test('permanent deletion check is read-only and displays backend refusal',async(
 });
 
 const sessionSource=fs.readFileSync(path.join(__dirname,'../desktop/ui/session-center.js'),'utf8');
+test('session comparison is profile-bound, read-only and limited to two sessions',async()=>{
+ const sessions=['a','b','c'].map((id,i)=>({sessionId:id,title:`Task ${id}`,workspace:'ws',running:false,archived:false}));
+ const detailCalls=[];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail'){
+   detailCalls.push(args.request.sessionId);const session=sessions.find(s=>s.sessionId===args.request.sessionId);
+   return {session,messages:[],throughSeq:1,profile:'p',projectionState:'sequenced',stats:{modelSelection:{lastUsed:{provider:'local',model:`model-${session.sessionId}`}},permissionPreset:'workspace-write',planMode:{active:false,pending:false},tokenUsage:{uncachedInputTokens:100,outputTokens:20}}};
+  }
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();
+ assert.equal(env.elements['session-detail-title'].textContent,'Task a');
+ await env.fire('session-compare-mode');
+ const rows=()=>env.elements['session-results'].children.filter(n=>n.dataset.sessionId);
+ await rows()[0].events.click();await rows()[1].events.click();assert.equal(env.elements['session-compare-run'].disabled,false);
+ await rows()[2].events.click();assert.equal(env.elements['session-compare-run'].disabled,false);
+ detailCalls.length=0;await env.fire('session-compare-run');
+ assert.deepEqual(detailCalls,['a','b']);assert.equal(env.elements['session-compare-panel'].hidden,false);
+ const usageText=n=>[n.textContent,...n.children.map(usageText)].join(' ');
+ assert.match(usageText(env.elements['session-compare-results']),/model-a/);assert.match(usageText(env.elements['session-compare-results']),/model-b/);
+ assert.match(usageText(env.elements['session-compare-results']),/100/);
+ assert(env.calls.filter(c=>c.command==='session_query'&&c.args.request.action==='detail').every(c=>c.args.expectedProfile==='p'));
+ assert(env.calls.every(c=>!['delete_sessions','archive_session','restore_session'].includes(c.command)));
+});
 test('session center searches body, copies bounded context, exports and navigates by ID',async()=>{
  const s={sessionId:'a',title:'Codex++ <img onerror=x>',workspace:'ws',cwd:'D:/work',running:false,archived:false};
  const env=environment((command,args)=>{
@@ -175,7 +201,7 @@ test('session center searches body, copies bounded context, exports and navigate
  assert.equal(env.elements['session-results'].children[0].children[0].textContent,'编程助手 <img onerror=x>');
  env.elements['session-search'].value='needle';await env.fire('session-search-form','submit');
  assert.match(env.elements['session-count'].textContent,/索引关闭/);
- await env.elements['session-results'].children[0].events.click();
+ await env.elements['session-results'].children[0].events.click();await env.settle();
  await env.settle();
  assert.equal(env.elements['session-detail-title'].textContent,'编程助手 <img onerror=x>');
  const usageText=n=>[n.textContent,...n.children.map(usageText)].join(' ');assert.match(usageText(env.elements['session-usage']),/workspace-write/);assert.match(usageText(env.elements['session-usage']),/计划模式/);assert.match(usageText(env.elements['session-usage']),/125/);assert.match(usageText(env.elements['session-usage']),/Read-only review/);
@@ -204,8 +230,8 @@ test('session checkpoints persist locally, require the saved profile, and restor
  });
  vm.runInContext(sessionSource,env.context);await env.settle();
  env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
- await env.elements['session-results'].children[0].events.click();
- await env.fire('session-checkpoint-save');
+  await env.elements['session-results'].children[0].events.click();await env.settle();
+  await env.fire('session-checkpoint-save');
  assert.equal(env.calls.find(c=>c.command==='checkpoint_create').args.input.profile,'profile-a');
  assert.equal(env.elements['session-checkpoints'].children.length,1);
  const actions=env.elements['session-checkpoints'].children[0].children[1].children;
