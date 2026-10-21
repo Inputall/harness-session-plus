@@ -43,7 +43,7 @@
     try {
       const result=await query({action:'skills',sessionId},hub.profile);
       if(generation!==hub.detailGeneration)return;
-      const target=el('usage');const title=node('strong','可用技能');title.className='session-usage-heading';target.append(title);
+      const target=el('usage');const title=node('strong','工具与技能清单（已验证）');title.className='session-usage-heading';target.append(title);target.append(node('p','以下技能来自当前 Harness 版本已验证的 skills/list 目录。MCP 服务清单接口尚未验证，因此连接状态标为“未探测”，不会猜测或调用未知协议。','subtle'));
       if(!result.skills.length){target.append(node('p','当前会话没有可调用技能。','session-empty'));return;}
       for(const skill of result.skills){const row=document.createElement('div');row.className='session-skill-row';const heading=document.createElement('div');heading.className='session-usage-row';heading.append(node('span',skill.name),node('strong',skill.modelInvocable?'模型可调用':'仅用户可调用'));row.append(heading);if(skill.description)row.append(node('small',skill.description));if(skill.whenToUse)row.append(node('small',`适用场景：${skill.whenToUse}`));target.append(row);}
     }catch(e){if(generation===hub.detailGeneration){const target=el('usage');target.append(node('p',`技能清单不可用：${message(e)}`,'session-empty'));}}

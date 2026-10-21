@@ -196,7 +196,7 @@ test('prompt templates save locally, filter, insert without sending, and delete 
   throw Error(command);
  });
  vm.runInContext(sessionSource,env.context);env.context.window.sessionCenterOpen();await env.settle();await env.settle();
- await env.elements['session-results'].children[0].events.click();await env.settle();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();await env.settle();await env.settle();
  await env.fire('session-template-new');env.elements['session-template-name'].value='Review';env.elements['session-template-category'].value='Quality';env.elements['session-template-content'].value='Inspect the diff and run focused tests.';
  let prevented=false;await env.elements['session-template-form'].events.submit({preventDefault(){prevented=true;}});await env.settle();
  assert.equal(prevented,true);assert.equal(env.elements['session-template-dialog'].open,false);assert.equal(templates.length,1);
@@ -437,6 +437,7 @@ test('Git workspace panel is read-only and ignores stale results after switching
  const env=environment((command,args)=>{
   if(command==='session_query'&&args.request.action==='list')return {sessions:[first,second],profile:'p'};
   if(command==='session_query'&&args.request.action==='detail')return {session:args.request.sessionId==='a'?first:second,messages:[],throughSeq:1,profile:'p'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[{name:'review',description:'Review changes',whenToUse:'Before merge',modelInvocable:true}]};
   if(command==='workspace_git_status'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {cwd:'D:/repo-a',branch:'main',clean:false,files:[{status:'工作区修改',path:'src/main.rs'}],commits:['abc123\t2026-10-19\tread-only']};}
   if(command==='workspace_git_diff'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {staged:'diff --cached staged marker',stagedTruncated:false,unstaged:'diff -- unstaged marker',unstagedTruncated:false};}
   if(command==='workspace_rules'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {files:[{path:'AGENTS.md',bytes:23,truncated:false,content:'Rule text <script> inert'}]};}
@@ -445,6 +446,8 @@ test('Git workspace panel is read-only and ignores stale results after switching
  vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
  await env.elements['session-results'].children[0].events.click();await env.settle();await env.settle();
  assert.match(env.elements['session-git-summary'].textContent,/D:\/repo-a/);assert.match(env.elements['session-git-files'].children[0].children[1].textContent,/src\/main\.rs/);
+ assert(env.elements['session-usage'].children.some(child=>child.textContent.includes('工具与技能清单（已验证）')));
+ assert(env.elements['session-usage'].children.some(child=>child.textContent.includes('MCP 服务清单接口尚未验证')));
  assert.equal(env.calls.filter(c=>c.command==='workspace_git_status').length,1);
  await env.elements['session-git-diff'].events.click();await env.settle();
  assert.match(env.elements['session-git-diff-staged'].textContent,/staged marker/);
