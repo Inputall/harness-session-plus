@@ -1,6 +1,6 @@
 # Harness Session Plus 桌面版
 
-当前源码版本 **0.9.0（开发中）**，最近发布桌面版为 0.8.0。Windows Tauri 2 桌面程序。Rust 宿主与静态 HTML/CSS/JavaScript 前端，提供独立 EXE，没有安装包或代码签名。
+当前桌面版本 **0.9.1**。Windows Tauri 2 桌面程序。Rust 宿主与静态 HTML/CSS/JavaScript 前端，提供独立 EXE，没有安装包或代码签名。
 
 完整功能、兼容性、调试参数和故障排查见[项目 README](../README.md)。
 

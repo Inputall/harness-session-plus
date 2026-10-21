@@ -2,14 +2,14 @@
 
 为 Windows 版 DeepSeek Harness 提供会话搜索、上下文恢复、关注提醒、会话回收站和皮肤中心的独立桌面工具。通过本机 Chrome DevTools Protocol（CDP）连接，使用已验证的原生只读查询及归档与恢复机制。
 
-当前源码版本：**0.9.0**（本地开发，尚未发布）。已发布桌面版仍为 0.8.0。采用 Rust + Tauri 2，前端使用 HTML/CSS/JavaScript，没有 Node 后端或 Electron 宿主，不修改 Harness 安装包。
+当前桌面版本：**0.9.1**。采用 Rust + Tauri 2，前端使用 HTML/CSS/JavaScript，没有 Node 后端或 Electron 宿主，不修改 Harness 安装包。
 
 > “移入回收站”是可恢复的原生归档。**永久删除尚未实现，按钮保持禁用**；“检查删除能力”只读取状态，不删除文件或会话。
 
 ## 下载 Windows 桌面版
 
-- [直接下载 0.8.0 可执行文件（Windows x64）](https://github.com/Inputall/harness-session-plus/releases/download/v0.8.0/hsp-desktop.exe)
-- [版本说明与 SHA256 校验文件](https://github.com/Inputall/harness-session-plus/releases/tag/v0.8.0)
+- [直接下载 0.9.1 可执行文件（Windows x64）](https://github.com/Inputall/harness-session-plus/releases/download/v0.9.1/hsp-desktop.exe)
+- [版本说明与 SHA256 校验文件](https://github.com/Inputall/harness-session-plus/releases/tag/v0.9.1)
 
 下载 `hsp-desktop.exe` 后直接运行，无需安装 Rust、Node 或编译源代码；运行环境需要 Windows 和 WebView2 Runtime。当前为未签名的便携 EXE，没有 MSI/NSIS 安装包。更新时先从托盘完全退出旧管理工具，再运行新版；Harness 的本机调试连接要求仍适用。
 
@@ -334,7 +334,8 @@ DEVELOPMENT_PLAN.md   原始分阶段开发方案
 | 桌面版本 | 主要变化 |
 | --- | --- |
 | 0.8.0 | 新增工具数据备份与迁移：SQLite 在线快照、清单与 SHA256 校验、恢复预览、恢复前备份与中断回滚、脱敏诊断及管理窗口实例锁 |
-| 0.9.0（开发中） | 新增本机备注、个人提示词库和 Ctrl+K 快速切换已加载会话；带 Git 状态核对的安全会话检查点、可配置本机提醒规则、任务运行观察台及跨会话后台任务、会话收藏与标签、批量整理及上下文导出、Git 只读代码审查、项目规则查看、工具与技能清单、模型与用量、计划模式快捷命令、后台任务快照及最多两个会话的并排比较 |
+| 0.9.1 | 新增待处理中心、本机审阅备注、已验证能力诊断和 Git 检查点逐文件状态对比；Windows x64 桌面可执行程序 |
+| 0.9.0 | 新增本机备注、个人提示词库和 Ctrl+K 快速切换已加载会话；带 Git 状态核对的安全会话检查点、可配置本机提醒规则、任务运行观察台及跨会话后台任务、会话收藏与标签、批量整理及上下文导出、Git 只读代码审查、项目规则查看、工具与技能清单、模型与用量、计划模式快捷命令、后台任务快照及最多两个会话的并排比较 |
 | 0.7.0 | 新增连接恢复助手：按本机偏好自动恢复回收站菜单增强；补充连接、增强和会话数据操作边界说明 |
 | 0.6.0 | 新增会话中心：原生正文搜索与索引关闭时的只读回退、真实消息摘录、继续任务提示词、复制/导出、后台关注、Windows 通知和按 ID 返回会话 |
 | 0.5.3 | 应用主题及清晰度写入本机配置；新增独立主题守护，管理工具退出后仍可恢复页面覆盖，并在显式恢复默认时停止守护 |
