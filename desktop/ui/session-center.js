@@ -5,6 +5,20 @@
   const el = id => document.getElementById(`session-${id}`);
   const node = (tag, text, cls) => {const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;};
   const message = error => error?.message || String(error || '操作失败，请重新检查连接。');
+  const watchEventIds=['approval','question','plan-review','stopped','error'];
+  function watchEvents(){return watchEventIds.filter(id=>el(`watch-${id}`).checked);}
+  function saveWatchPreferences(){
+    try{localStorage.setItem('hsp-session-watch-rules',JSON.stringify({events:watchEvents(),native:el('native').checked}));}
+    catch{el('notification-feedback').textContent='提醒规则无法保存在本机；当前设置仍可用于本次运行。';}
+  }
+  function loadWatchPreferences(){
+    for(const id of watchEventIds)el(`watch-${id}`).checked=true;
+    try{
+      const saved=JSON.parse(localStorage.getItem('hsp-session-watch-rules')||'null');if(!saved||typeof saved!=='object')return;
+      if(Array.isArray(saved.events))for(const id of watchEventIds)el(`watch-${id}`).checked=saved.events.includes(id);
+      if(typeof saved.native==='boolean')el('native').checked=saved.native;
+    }catch{el('notification-feedback').textContent='已忽略无效的本机提醒规则，使用默认设置。';}
+  }
   const query = (request, profile=hub.profile) => invoke('session_query',{request,expectedProfile:profile});
   const label = s => s.archived?'已归档':s.pending==='approval'?'等待审批':s.pending==='question'?'等待回答':s.pending==='plan-review'?'等待计划审阅':s.running===true?'运行中':s.running===false?'未运行':'运行状态未知';
   function error(value) {el('error').hidden=!value;el('error').textContent=value||'';}
@@ -431,7 +445,7 @@
   async function watch(ids) {
     if(hub.watchBusy)return;hub.watchBusy=true;el('watch-add').disabled=true;el('watch-stop').disabled=true;
     try {
-      await invoke('session_watch',{sessionIds:[...ids],native:el('native').checked,expectedProfile:hub.profile});hub.watched=new Set(ids);renderWatched();
+      await invoke('session_watch',{sessionIds:[...ids],native:el('native').checked,events:watchEvents(),expectedProfile:hub.profile});hub.watched=new Set(ids);renderWatched();
       el('notification-feedback').textContent=ids.size?'已建立新基线。工具留在托盘时继续检查，等待状态未观测的会话不会生成等待提醒。':'已停止关注。';
     }catch(e){hub.watched.clear();renderWatched();error(message(e));}
     finally{hub.watchBusy=false;el('watch-add').disabled=!hub.detail||hub.detail.session.archived;el('watch-stop').disabled=false;if(hub.detail)el('watch-add').textContent=hub.watched.has(hub.detail.session.sessionId)?'取消关注':'关注此会话';}
@@ -484,7 +498,9 @@
   el('rules-read').addEventListener('click',loadRules);
   el('watch-add').addEventListener('click',()=>{if(!hub.detail)return;const ids=new Set(hub.watched),id=hub.detail.session.sessionId;ids.has(id)?ids.delete(id):ids.add(id);return watch(ids);});
   el('watch-stop').addEventListener('click',()=>watch(new Set()));
-  el('native').addEventListener('change',()=>{if(hub.watched.size)watch(hub.watched);});
+  loadWatchPreferences();
+  for(const id of watchEventIds)el(`watch-${id}`).addEventListener('change',()=>{saveWatchPreferences();if(hub.watched.size)watch(hub.watched);});
+  el('native').addEventListener('change',()=>{saveWatchPreferences();if(hub.watched.size)watch(hub.watched);});
   el('notification-test').addEventListener('click',async()=>{try{await invoke('session_notification_test');el('notification-feedback').textContent='已向 Windows 请求测试通知。若没有显示，请检查系统通知设置。';}catch(e){el('notification-feedback').textContent=message(e);}});
   window.sessionCenterOpen=()=>{loadCheckpoints();loadTemplates();if(!hub.loaded&&!hub.loading)refresh();};
   window.openSessionSwitcher=()=>{if(hub.batchBusy){toast('批量操作完成后再切换会话。',true);return;}hub.switcherOpen=true;el('switcher-search').value='';el('switcher-dialog').showModal();renderSwitcher();el('switcher-search').focus();};

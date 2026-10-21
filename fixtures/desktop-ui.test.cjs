@@ -28,9 +28,10 @@ function environment(responder) {
   const document={getElementById:id=>elements[id],createElement:()=>new Element(),documentElement:{dataset:{}},querySelector:()=>null,querySelectorAll:selector=>({'.page':pages,'.nav-item':nav,'[data-page]':nav,'[data-nav]':navShortcuts,'[data-action]':actions}[selector]||[])};
   const invoke=async(command,args)=>{calls.push({command,args});if(command==='load_settings')return settings;if(command==='save_settings')return args.settings;return responder(command,args);};
   const listeners={},windowEvents={};
-  const context=vm.createContext({document,window:{confirm:text=>{confirmations.push(text);return true;},addEventListener:(name,fn)=>{windowEvents[name]=fn;},__TAURI__:{core:{invoke},event:{listen:async(name,fn)=>{listeners[name]=fn;}}}},Option:class extends Element {constructor(text,value){super();this.textContent=text;this.value=value;}},setTimeout:()=>nextTimer++,clearTimeout:()=>{},setInterval:fn=>{const id=nextTimer++;intervals.set(id,fn);return id;},clearInterval:id=>intervals.delete(id),Date,console});
+  const storage=new Map();const localStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,String(value))};
+  const context=vm.createContext({document,window:{confirm:text=>{confirmations.push(text);return true;},addEventListener:(name,fn)=>{windowEvents[name]=fn;},__TAURI__:{core:{invoke},event:{listen:async(name,fn)=>{listeners[name]=fn;}}}},localStorage,Option:class extends Element {constructor(text,value){super();this.textContent=text;this.value=value;}},setTimeout:()=>nextTimer++,clearTimeout:()=>{},setInterval:fn=>{const id=nextTimer++;intervals.set(id,fn);return id;},clearInterval:id=>intervals.delete(id),Date,console});
   vm.runInContext(source,context);
-  return {elements,nav,actions,calls,confirmations,intervals,context,listeners,windowEvents,fire:async(id,event='click')=>{await elements[id].events[event]({preventDefault(){}});},settle:()=>new Promise(resolve=>setImmediate(resolve))};
+  return {elements,nav,actions,calls,confirmations,intervals,context,listeners,windowEvents,storage,fire:async(id,event='click')=>{await elements[id].events[event]({preventDefault(){}});},settle:()=>new Promise(resolve=>setImmediate(resolve))};
 }
 const diagnostic={browser:'Mock/1',injection:{installed:false,dataOperations:false},pageRecognized:true};
 test('theme UI uses neutral labels without changing stored theme identity',async()=>{
@@ -401,7 +402,12 @@ test('session center searches body, copies bounded context, exports and navigate
  await env.fire('session-export');await env.fire('session-open');
  assert.equal(env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='open').args.request.sessionId,'a');
  assert.equal(env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='open').args.expectedProfile,'profile-a');
- await env.fire('session-watch-add');assert.match(env.elements['session-watch-status'].textContent,/1/);await env.fire('session-watch-stop');assert.equal(env.elements['session-watch-status'].textContent,'已停止');
+ await env.fire('session-watch-add');assert.match(env.elements['session-watch-status'].textContent,/1/);
+ const watchCall=env.calls.filter(c=>c.command==='session_watch').at(-1);assert.deepEqual(Array.from(watchCall.args.events),['approval','question','plan-review','stopped','error']);
+ env.elements['session-watch-error'].checked=false;await env.fire('session-watch-error','change');await env.settle();
+ assert.deepEqual(JSON.parse(env.storage.get('hsp-session-watch-rules')).events,['approval','question','plan-review','stopped']);
+ assert.deepEqual(Array.from(env.calls.filter(c=>c.command==='session_watch').at(-1).args.events),['approval','question','plan-review','stopped']);
+ await env.fire('session-watch-stop');assert.equal(env.elements['session-watch-status'].textContent,'已停止');
 });
 test('session checkpoints persist locally, require the saved profile, and restore through the exact session ID',async()=>{
  const session={sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',running:false,archived:false};
