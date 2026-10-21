@@ -65,10 +65,26 @@
     if(!hub.checkpoints.length){target.append(node('p','尚未保存检查点。','session-empty'));return;}
     for(const checkpoint of hub.checkpoints){
       const row=document.createElement('article');row.className='checkpoint-row';
-      const info=document.createElement('div');info.append(node('strong',sessionLabel(checkpoint.title)||'未命名会话'),node('small',`${sessionLabel(checkpoint.workspace)||'未分组'} · ${new Date(checkpoint.createdAt).toLocaleString('zh-CN')}`));
+      const info=document.createElement('div');const git=checkpoint.git;const gitLabel=git?`Git ${git.branch} · ${git.clean?'干净':`${git.changedFiles} 项改动`}`:'Git 快照不可用';info.append(node('strong',sessionLabel(checkpoint.title)||'未命名会话'),node('small',`${sessionLabel(checkpoint.workspace)||'未分组'} · ${new Date(checkpoint.createdAt).toLocaleString('zh-CN')} · ${gitLabel}`));
       const actions=document.createElement('div');actions.className='button-group';
       const restore=document.createElement('button');restore.type='button';restore.className='button small';restore.textContent='恢复检查点';restore.disabled=!hub.profile||checkpoint.profile!==hub.profile;
-      restore.addEventListener('click',async()=>{restore.disabled=true;try{const result=await invoke('checkpoint_restore',{id:checkpoint.id});el('detail-title').textContent=sessionLabel(result.title)||'未命名会话';el('detail-meta').textContent=`检查点 · ${sessionLabel(result.workspace)||'未分组'} · ${new Date(result.createdAt).toLocaleString('zh-CN')} · 已核对当前 Harness profile 和真实会话 ID`;el('prompt').value=result.prompt;el('prompt').readOnly=false;el('copy').disabled=false;el('export').disabled=false;el('open').disabled=false;hub.gitSessionId=result.sessionId;if(hub.gitSessionId)loadGit(hub.gitSessionId);toast('已打开原会话并载入检查点提示词；核对内容后点击“复制提示词”，再手动发送。');}catch(e){toast(message(e),true);}finally{restore.disabled=false;}});
+      restore.addEventListener('click',async()=>{
+        restore.disabled=true;
+        try{
+          if(checkpoint.git){
+            let current=null;
+            try{current=await invoke('workspace_git_status',{sessionId:checkpoint.sessionId,expectedProfile:checkpoint.profile});}catch{}
+            const before=checkpoint.git;
+            const comparable=current&&Number.isSafeInteger(current.files?.length);
+            const same=comparable&&current.branch===before.branch&&current.clean===before.clean&&current.files.length===before.changedFiles;
+            if(!same){
+              const now=comparable?`当前：${current.branch} · ${current.clean?'干净':`${current.files.length} 项改动`}`:'当前 Git 状态无法读取';
+              if(!window.confirm(`检查点的 Git 状态与当前工作区不同或无法核对。\n保存时：${before.branch} · ${before.clean?'干净':`${before.changedFiles} 项改动`}\n${now}\n\n继续只打开会话并载入提示词？本操作不会回退或修改项目文件。`))return;
+            }
+          }
+          const result=await invoke('checkpoint_restore',{id:checkpoint.id});el('detail-title').textContent=sessionLabel(result.title)||'未命名会话';const git=result.git;const gitLabel=git?`保存时 Git ${git.branch} · ${git.clean?'干净':`${git.changedFiles} 项改动`}`:'保存时没有可用 Git 快照';el('detail-meta').textContent=`检查点 · ${sessionLabel(result.workspace)||'未分组'} · ${new Date(result.createdAt).toLocaleString('zh-CN')} · ${gitLabel} · 已核对当前 Harness profile 和真实会话 ID`;el('prompt').value=result.prompt;el('prompt').readOnly=false;el('copy').disabled=false;el('export').disabled=false;el('open').disabled=false;hub.gitSessionId=result.sessionId;if(hub.gitSessionId)loadGit(hub.gitSessionId);toast('已打开原会话并载入检查点提示词；核对 Git 状态后点击“复制提示词”，再手动发送。');
+        }catch(e){toast(message(e),true);}finally{restore.disabled=false;}
+      });
       if(restore.disabled)info.append(node('small','切换到保存此检查点的 Harness profile 后才能恢复。','subtle'));
       const remove=document.createElement('button');remove.type='button';remove.className='button small';remove.textContent='删除';
       remove.addEventListener('click',async()=>{if(!window.confirm('删除这条本机检查点？操作不可撤销，不会影响 Harness 会话。'))return;remove.disabled=true;try{await invoke('checkpoint_delete',{id:checkpoint.id});await loadCheckpoints();toast('检查点已删除。');}catch(e){toast(message(e),true);remove.disabled=false;}});

@@ -1,7 +1,7 @@
 //! Read-only project workspace diagnostics. No Git mutation commands are exposed.
 use crate::{recycle_error, UiError};
 use hsp_core::{recycle, sessions};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{path::Path, process::Stdio, time::Duration};
 use tokio::io::AsyncReadExt;
@@ -19,6 +19,34 @@ const MAX_RULE_FILES: usize = 32;
 struct GitFile {
     status: String,
     path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitCheckpoint {
+    pub branch: String,
+    pub clean: bool,
+    pub changed_files: usize,
+}
+
+pub(crate) async fn git_checkpoint(cwd: &Path) -> Option<GitCheckpoint> {
+    let status = git(
+        cwd,
+        &[
+            "status",
+            "--porcelain=v1",
+            "--branch",
+            "--untracked-files=normal",
+        ],
+    )
+    .await
+    .ok()?;
+    let (branch, files) = parse_status(&status);
+    Some(GitCheckpoint {
+        branch,
+        clean: files.is_empty(),
+        changed_files: files.len(),
+    })
 }
 
 #[derive(Debug, Serialize)]

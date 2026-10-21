@@ -817,6 +817,7 @@ mod tests {
             cwd: "D:/work".into(),
             created_at: 123,
             prompt: "continue task".into(),
+            git: None,
         };
         fs::write(
             source.0.join("session-checkpoints.json"),

@@ -23,6 +23,8 @@ pub struct Checkpoint {
     pub cwd: String,
     pub created_at: u64,
     pub prompt: String,
+    #[serde(default)]
+    pub git: Option<crate::workspace::GitCheckpoint>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,6 +85,10 @@ pub fn validate(entries: &[Checkpoint]) -> Result<(), String> {
             || item.workspace.len() > 2000
             || item.cwd.len() > 4096
             || !text(&item.prompt, MAX_TEXT)
+            || item
+                .git
+                .as_ref()
+                .is_some_and(|git| git.branch.len() > 2000 || git.changed_files > 1_000_000)
     }) {
         return Err("检查点字段无效或超过限制".into());
     }
@@ -201,6 +207,7 @@ pub async fn checkpoint_create(
         &input.cwd,
     )
     .await?;
+    let git = crate::workspace::git_checkpoint(Path::new(&input.cwd)).await;
     let _lock = state.checkpoint_lock.lock().unwrap();
     let mut entries = read(&state.root)?;
     if entries.len() >= MAX_CHECKPOINTS {
@@ -227,6 +234,7 @@ pub async fn checkpoint_create(
         cwd: input.cwd,
         created_at,
         prompt: input.prompt,
+        git,
     };
     entries.retain(|item| item.id != checkpoint.id);
     entries.insert(0, checkpoint.clone());
@@ -284,7 +292,7 @@ pub async fn checkpoint_restore(
     .map_err(recycle_error)?;
     super::session_center::foreground_for_checkpoint(identity.main_pid);
     Ok(
-        json!({"id":checkpoint.id,"sessionId":checkpoint.session_id,"title":checkpoint.title,"workspace":checkpoint.workspace,"cwd":checkpoint.cwd,"createdAt":checkpoint.created_at,"prompt":checkpoint.prompt}),
+        json!({"id":checkpoint.id,"sessionId":checkpoint.session_id,"title":checkpoint.title,"workspace":checkpoint.workspace,"cwd":checkpoint.cwd,"createdAt":checkpoint.created_at,"prompt":checkpoint.prompt,"git":checkpoint.git}),
     )
 }
 
@@ -325,6 +333,7 @@ mod tests {
             cwd: "D:/work".into(),
             created_at: 123,
             prompt: "continue this task".into(),
+            git: None,
         };
         validate(std::slice::from_ref(&checkpoint)).unwrap();
         let duplicate = vec![checkpoint.clone(), checkpoint.clone()];

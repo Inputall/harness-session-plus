@@ -23,14 +23,14 @@ function environment(responder) {
   const nav = ['overview','sessions','trash','connection','capabilities','skins','settings'].map(page=>{const el=new Element();el.dataset.page=page;return el;});
   const actions=['diagnose','inject_test','remove_injection','probe_capabilities'].map(action=>{const el=new Element();el.dataset.action=action;return el;});
   const navShortcuts=['connection','capabilities'].map(page=>{const el=new Element();el.dataset.nav=page;return el;});
-  const calls=[];const intervals=new Map();let nextTimer=1;
+  const calls=[];const confirmations=[];const intervals=new Map();let nextTimer=1;
   const settings={port:9223,target_id:null,executable:'C:\\Harness.exe',theme:'dark'};
   const document={getElementById:id=>elements[id],createElement:()=>new Element(),documentElement:{dataset:{}},querySelector:()=>null,querySelectorAll:selector=>({'.page':pages,'.nav-item':nav,'[data-page]':nav,'[data-nav]':navShortcuts,'[data-action]':actions}[selector]||[])};
   const invoke=async(command,args)=>{calls.push({command,args});if(command==='load_settings')return settings;if(command==='save_settings')return args.settings;return responder(command,args);};
   const listeners={},windowEvents={};
-  const context=vm.createContext({document,window:{confirm:()=>true,addEventListener:(name,fn)=>{windowEvents[name]=fn;},__TAURI__:{core:{invoke},event:{listen:async(name,fn)=>{listeners[name]=fn;}}}},Option:class extends Element {constructor(text,value){super();this.textContent=text;this.value=value;}},setTimeout:()=>nextTimer++,clearTimeout:()=>{},setInterval:fn=>{const id=nextTimer++;intervals.set(id,fn);return id;},clearInterval:id=>intervals.delete(id),Date,console});
+  const context=vm.createContext({document,window:{confirm:text=>{confirmations.push(text);return true;},addEventListener:(name,fn)=>{windowEvents[name]=fn;},__TAURI__:{core:{invoke},event:{listen:async(name,fn)=>{listeners[name]=fn;}}}},Option:class extends Element {constructor(text,value){super();this.textContent=text;this.value=value;}},setTimeout:()=>nextTimer++,clearTimeout:()=>{},setInterval:fn=>{const id=nextTimer++;intervals.set(id,fn);return id;},clearInterval:id=>intervals.delete(id),Date,console});
   vm.runInContext(source,context);
-  return {elements,nav,actions,calls,intervals,context,listeners,windowEvents,fire:async(id,event='click')=>{await elements[id].events[event]({preventDefault(){}});},settle:()=>new Promise(resolve=>setImmediate(resolve))};
+  return {elements,nav,actions,calls,confirmations,intervals,context,listeners,windowEvents,fire:async(id,event='click')=>{await elements[id].events[event]({preventDefault(){}});},settle:()=>new Promise(resolve=>setImmediate(resolve))};
 }
 const diagnostic={browser:'Mock/1',injection:{installed:false,dataOperations:false},pageRecognized:true};
 test('theme UI uses neutral labels without changing stored theme identity',async()=>{
@@ -405,7 +405,7 @@ test('session center searches body, copies bounded context, exports and navigate
 });
 test('session checkpoints persist locally, require the saved profile, and restore through the exact session ID',async()=>{
  const session={sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',running:false,archived:false};
- const saved={id:'cp-1-0',profile:'profile-a',sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',createdAt:1,prompt:'continue this verified task'};
+ const saved={id:'cp-1-0',profile:'profile-a',sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',createdAt:1,prompt:'continue this verified task',git:{branch:'main',clean:false,changedFiles:2}};
  let checkpoints=[];
  const env=environment((command,args)=>{
   if(command==='session_query'&&args.request.action==='list')return {sessions:[session],profile:'profile-a'};
@@ -413,6 +413,7 @@ test('session checkpoints persist locally, require the saved profile, and restor
   if(command==='checkpoint_list')return checkpoints;
   if(command==='checkpoint_create'){assert.equal(args.input.sessionId,'real-id-1');assert.equal(args.input.profile,'profile-a');checkpoints=[saved];return saved;}
   if(command==='checkpoint_restore'){assert.equal(args.id,'cp-1-0');return saved;}
+  if(command==='workspace_git_status')return {branch:'feature/newer',clean:true,files:[]};
   if(command==='checkpoint_delete'){checkpoints=[];return null;}
   throw Error(command);
  });
@@ -424,8 +425,10 @@ test('session checkpoints persist locally, require the saved profile, and restor
  assert.equal(env.elements['session-checkpoints'].children.length,1);
  const actions=env.elements['session-checkpoints'].children[0].children[1].children;
  assert.equal(actions[0].disabled,false);await actions[0].events.click();
+ assert.match(env.confirmations[0],/Git 状态与当前工作区不同/);
  assert.equal(env.elements['session-prompt'].value,'continue this verified task');
  assert.match(env.elements['session-detail-meta'].textContent,/已核对当前 Harness profile/);
+ assert.match(env.elements['session-detail-meta'].textContent,/保存时 Git main · 2 项改动/);
  assert.equal(env.elements['session-copy'].disabled,false);
  const stale={...saved,profile:'other-profile'};checkpoints=[stale];
  env.nav.find(n=>n.dataset.page==='overview').events.click();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
