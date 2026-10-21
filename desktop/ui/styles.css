@@ -64,3 +64,88 @@
 #backup-details{display:grid;gap:16px;min-width:0}
 #backup-files{max-height:240px;overflow:auto;margin:0;padding-left:24px;font:12px/1.8 Consolas,monospace;overflow-wrap:anywhere}
 #page-settings .button-group{flex-wrap:wrap}
+
+/* Session center workspace layout */
+#page-sessions>.page-heading{margin-bottom:18px}
+#page-sessions>.notice{align-items:flex-start;padding:14px 18px;margin-bottom:16px}
+#page-sessions>.notice>svg{margin-top:2px;width:20px;height:20px}
+#page-sessions>.notice>div{min-width:0}
+#page-sessions>.notice p{line-height:1.65;max-width:900px}
+#page-sessions>.panel.spacing{margin-top:0}
+#page-sessions>.panel.spacing.session-note-panel,
+#page-sessions>.panel.spacing.session-compare-panel,
+#page-sessions>.panel.spacing.session-git-panel,
+#page-sessions>.panel.spacing:not(:first-of-type){margin-top:16px}
+#page-sessions>.panel.spacing>.session-toolbar{padding:11px 16px;gap:8px}
+#page-sessions>.panel.spacing>.session-toolbar input:not([type=checkbox]),
+#page-sessions>.panel.spacing>.session-toolbar select{min-height:38px}
+#page-sessions>.panel.spacing>.session-toolbar:first-child input{flex:1 1 320px}
+#page-sessions>.panel.spacing>.session-toolbar:nth-child(2){background:color-mix(in srgb,var(--raised) 55%,var(--card))}
+#page-sessions>.panel.spacing>.session-toolbar:nth-child(2) .subtle{flex:1 1 220px}
+#page-sessions>.panel.spacing>.session-toolbar:nth-child(3){padding-top:9px;padding-bottom:9px}
+#page-sessions .session-layout{grid-template-columns:minmax(280px,.78fr) minmax(0,1.22fr);align-items:start}
+#page-sessions .session-results{max-height:min(680px,calc(100vh - 330px));min-height:220px;padding:12px;align-content:start}
+#page-sessions .session-card{padding:13px 14px;border-radius:8px;transition:background .14s,border-color .14s,transform .14s}
+#page-sessions .session-card:hover{transform:translateY(-1px)}
+#page-sessions .session-card.selected{box-shadow:inset 3px 0 var(--brand)}
+#page-sessions .session-card>strong{display:block;font-size:13px;line-height:1.45}
+#page-sessions .session-card>small{line-height:1.45;overflow-wrap:anywhere}
+#page-sessions .session-card .session-id{font:10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;opacity:.78}
+#page-sessions .session-detail{padding:20px 22px;border-left:1px solid var(--line);background:color-mix(in srgb,var(--card) 68%,var(--bg));}
+#page-sessions .session-detail>h2{font-size:18px;line-height:1.4}
+#page-sessions .session-detail>.button-group{flex-wrap:wrap}
+#page-sessions .session-detail>.subtle{line-height:1.7}
+#page-sessions .session-label{margin:15px 0 7px;font-size:11px}
+#page-sessions .session-excerpts{padding-right:3px}
+#page-sessions .session-excerpts:empty{min-height:42px}
+#page-sessions .session-usage-row{min-width:0;align-items:flex-start}
+#page-sessions .session-usage-row strong{max-width:60%;font-size:11px}
+#page-sessions .session-note-panel>p{line-height:1.7;padding-bottom:12px}
+.session-utilities{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:24px;align-items:start}
+.session-utilities-heading{grid-column:1/-1;padding:2px 2px 3px;border-bottom:1px solid var(--line)}
+.session-utilities-heading h2{font-size:16px;font-weight:600}
+.session-utilities-heading p{margin:4px 0 10px;color:var(--muted);font-size:11px}
+.session-utilities>.panel{margin:0;min-width:0}
+.session-utilities>.session-note-panel,.session-utilities>.session-compare-panel,.session-utilities>.session-util-wide,.session-utilities>article:nth-of-type(4){grid-column:1/-1}
+.session-utilities>.panel>p.subtle{line-height:1.65;padding:12px 18px 0}
+.session-utilities>.session-jobs-panel>.subtle{padding-left:18px;padding-right:18px}
+.session-utilities>.session-jobs-panel>.session-jobs{padding:0 18px 14px}
+.session-utilities>.session-git-panel>.subtle{padding:12px 18px 0}
+.session-utilities>.session-git-panel>.session-git-files{margin:12px 18px}
+.session-utilities>.session-watch-panel .session-watch-body{padding:16px 18px}
+.session-utilities .enhancement{padding:16px 18px}
+.session-utilities .git-diff-section{margin:12px 18px}
+.session-utilities .session-rule-files{margin:12px 18px}
+#page-sessions{max-width:none;width:100%}
+#page-sessions .session-layout{grid-template-columns:minmax(360px,.95fr) minmax(0,1.05fr)}
+#page-sessions .session-list-pane{min-width:0;background:color-mix(in srgb,var(--bg) 62%,var(--card))}
+#page-sessions .session-list-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px 11px;border-bottom:1px solid var(--line)}
+#page-sessions .session-list-heading h2{font-size:13px;font-weight:600}
+#page-sessions .session-list-heading .subtle{flex:0 1 auto;min-width:0;text-align:right;font-size:10px}
+#page-sessions .session-results{padding:10px 12px}
+#page-sessions .session-pagination{justify-content:flex-end;padding:10px 12px;border-top:1px solid var(--line);border-bottom:0}
+@media(min-width:1151px){
+  #page-sessions .session-layout{height:min(720px,calc(100vh - 330px));min-height:420px;grid-template-columns:minmax(360px,.95fr) minmax(0,1.05fr);align-items:stretch;overflow:hidden}
+  #page-sessions .session-list-pane{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line)}
+  #page-sessions .session-results{flex:1;min-height:0;max-height:none;align-content:start;overflow-y:auto;overscroll-behavior:contain}
+  #page-sessions .session-pagination{flex:none}
+  #page-sessions .session-detail{min-height:0;height:100%;overflow-y:auto;overscroll-behavior:contain;border-left:0}
+  #page-sessions .session-utilities{margin-top:18px}
+}
+
+@media(max-width:1150px){
+  #page-sessions .session-layout{grid-template-columns:minmax(0,1fr)}
+  #page-sessions .session-results{max-height:360px;min-height:160px}
+  #page-sessions .session-detail{border-left:0;border-top:1px solid var(--line)}
+}
+@media(max-width:700px){
+  .session-utilities{grid-template-columns:minmax(0,1fr);gap:12px}
+  .session-utilities-heading,.session-utilities>.session-note-panel,.session-utilities>.session-compare-panel,.session-utilities>.session-util-wide,.session-utilities>article:nth-of-type(4){grid-column:1}
+  #page-sessions>.page-heading{align-items:flex-start}
+  #page-sessions>.page-heading .button{padding:8px 10px}
+  #page-sessions>.panel.spacing>.session-toolbar{padding:10px 12px}
+  #page-sessions .session-detail{padding:16px}
+  #page-sessions .session-usage{grid-template-columns:minmax(0,1fr)}
+  #page-sessions .checkpoint-row{align-items:flex-start;flex-direction:column}
+  #page-sessions .session-toolbar select{flex:1 1 145px;min-width:0}
+}
