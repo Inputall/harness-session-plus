@@ -1,6 +1,6 @@
 # Harness Session Plus 桌面版
 
-当前桌面版本 **0.9.1**。Windows Tauri 2 桌面程序。Rust 宿主与静态 HTML/CSS/JavaScript 前端，提供独立 EXE，没有安装包或代码签名。
+当前桌面版本 **0.9.2**。Windows Tauri 2 桌面程序。Rust 宿主与静态 HTML/CSS/JavaScript 前端，提供独立 EXE，没有安装包或代码签名。
 
 完整功能、兼容性、调试参数和故障排查见[项目 README](../README.md)。
 
@@ -47,13 +47,15 @@ cargo build --manifest-path desktop/src-tauri/Cargo.toml --release --locked
 - 后台任务列表：按会话读取 Harness 原生任务名册首个快照并允许手动刷新；不读取/消费输出、不启动或停止任务。
 - 多会话比较：在同一 Harness profile 中选择两个会话，按需并排读取状态、最近模型、权限预设、计划模式和持久化 Token 汇总；只读、缺失投影标记为不可用，切换 profile 或刷新列表时清除选择。
 - 本机提醒规则：独立启用等待审批、等待回答、等待计划审阅、运行停止和序号核验错误事件，并单独控制 Windows 系统通知；偏好保存在本机。通知不包含会话正文，监视每 10 秒轮询，断线或 Harness 实例改变后停止；不会自动发送消息或启动任务。
+- 会话接续包：导出/导入版本 1 JSON，最多 1 MiB，可包含备注、下一步、标签、可选最近文本及轻量状态摘要；不包含 profile、会话 ID 或本机路径。导入前预览，作为历史引用加入当前提示词，不会自动发送。
+- 通知历史：每个 Harness profile 本机保存最多 200 条通知，可按类型和关键词过滤、清空；仅保存标题、会话 ID、事件类型和时间，不保存聊天正文。
 - 可选每 15 秒检查连接，连续 3 次失败暂停。
 - 明暗主题、明确页面选择、报告导出与系统托盘。
 - 概览页 CoderPlant · 码源推荐卡片，支持明暗主题和窄窗口布局；点击后使用默认浏览器打开固定官网地址。
 - 永久删除保持禁用，删除能力检查仅只读显示原因。
 - Harness 皮肤中心：四套配色、40 款转换主题，支持轻量预览、搜索分类分页、背景清晰度调节（0–100%，默认 70%）、应用及恢复默认。DreamSkin 社区支持联网分页浏览及按需核验安装。手动导入 `schemaVersion: 1` 的主题 JSON（64 KiB）和可选 PNG/JPEG/WebP（5 MiB），最多保存 20 个，社区主题不占此名额。应用后会在 `active-theme.json` 保存主题、壁纸、清晰度和恢复版本；独立后台守护每三秒检查样式，在 Harness 页面断线重连或覆盖丢失时尝试恢复。仅在唯一页面匹配时应用，不修改会话、Harness 安装包或原生主题偏好。完整退出并重启 Harness 的恢复流程尚未实测；电脑重启后需打开工具启动守护，本版不设置开机自启。
 
-原生回收站只适配已验证安装包的 Harness 0.2.0-rc.2，见[验证记录](../docs/recycle-validation.md)和[删除审计](../docs/permanent-delete-audit.md)。
+原生回收站只适配已核验安装包摘要的 Harness 0.2.0-rc.2 与 0.2.1-rc.2，见[验证记录](../docs/recycle-validation.md)和[删除审计](../docs/permanent-delete-audit.md)。
 
 ## 数据和权限
 

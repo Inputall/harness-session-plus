@@ -185,3 +185,11 @@
   #page-sessions .session-run-stats-results{grid-template-columns:minmax(0,1fr)}
   #page-sessions #session-search-status{flex-basis:100%}
 }
+.session-notice-history-tools{display:flex;gap:10px;padding:14px 18px;align-items:center;border-bottom:1px solid var(--line)}
+.session-notice-history-tools input{flex:1;min-width:140px}
+.session-notice-history-list{padding:0 18px 16px;max-height:360px;overflow:auto}
+.session-notice-history-list .session-notice{margin-top:10px}
+.session-continuity-panel{display:grid;gap:12px}
+.session-continuity-panel>.field{max-width:none}
+.session-continuity-preview{padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--raised);color:var(--muted);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+@media(max-width:700px){.session-notice-history-tools{flex-wrap:wrap}.session-notice-history-tools select{flex:1 1 145px;min-width:0}.session-notice-history-tools input{flex-basis:100%}}

@@ -1,7 +1,7 @@
 use crate::{recycle_error, show, Desktop, UiError};
 use hsp_core::{recycle, sessions};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::{collections::HashMap, io::Write};
 use tauri::{Emitter, Manager};
 use tokio_util::sync::CancellationToken;
 
@@ -87,6 +87,91 @@ pub fn session_export(
     let path = folder.join(format!("session-context-{stamp}.md"));
     std::fs::write(&path, content).map_err(|_| UiError::new("export", "无法保存导出文件。"))?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+fn validate_continuity_content(content: &str) -> Result<(), UiError> {
+    if content.trim().is_empty() || content.len() > 1_048_576 {
+        return Err(UiError::new("continuity", "接续包为空或超过 1 MiB 限制。"));
+    }
+    let pack: Value = serde_json::from_str(content)
+        .map_err(|_| UiError::new("continuity", "接续包 JSON 格式无效。"))?;
+    let source = &pack["source"];
+    let context = &pack["context"];
+    let bounded_text =
+        |value: &Value, limit: usize| value.as_str().is_some_and(|text| text.len() <= limit);
+    let valid_tags = context["tags"]
+        .as_array()
+        .is_some_and(|tags| tags.len() <= 8 && tags.iter().all(|tag| bounded_text(tag, 32)));
+    let valid_messages = context["messages"].as_array().is_some_and(|messages| {
+        messages.len() <= 20
+            && messages.iter().all(|item| {
+                matches!(item["role"].as_str(), Some("user" | "assistant"))
+                    && item["seq"].as_u64().is_some()
+                    && bounded_text(&item["text"], 6000)
+            })
+    });
+    let valid_git = context["git"].is_null()
+        || (bounded_text(&context["git"]["branch"], 2000)
+            && context["git"]["clean"].is_boolean()
+            && context["git"]["changedFiles"]
+                .as_u64()
+                .is_some_and(|count| count <= 10_000));
+    let valid_checkpoint =
+        context["checkpoint"].is_null() || context["checkpoint"]["createdAt"].as_u64().is_some();
+    let contains_identity = ["profile", "sessionId", "cwd", "path"].iter().any(|key| {
+        pack.get(key).is_some() || source.get(key).is_some() || context.get(key).is_some()
+    });
+    if pack["format"] != "hsp-session-continuity"
+        || pack["version"] != 1
+        || !bounded_text(&source["title"], 500)
+        || !bounded_text(&source["workspace"], 500)
+        || !bounded_text(&context["notes"], 4000)
+        || !bounded_text(&context["nextTask"], 2000)
+        || !valid_tags
+        || !valid_messages
+        || !context["messagesIncluded"].is_boolean()
+        || !context["historyIncomplete"].is_boolean()
+        || !valid_git
+        || !valid_checkpoint
+        || contains_identity
+    {
+        return Err(UiError::new(
+            "continuity",
+            "接续包字段无效、包含会话身份信息或超过限制。",
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn session_continuity_export(
+    content: String,
+    state: tauri::State<'_, Desktop>,
+) -> Result<String, UiError> {
+    validate_continuity_content(&content)?;
+    let folder = state.root.join("exports");
+    std::fs::create_dir_all(&folder)
+        .map_err(|_| UiError::new("continuity", "无法创建导出目录。"))?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let path = folder.join(format!("session-continuity-{stamp}.json"));
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|_| UiError::new("continuity", "无法创建接续包文件。"))?;
+        file.write_all(content.as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|_| UiError::new("continuity", "接续包写入失败。"))?;
+        Ok(path.to_string_lossy().into_owned())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&path);
+    }
+    result
 }
 
 #[tauri::command]
@@ -457,6 +542,25 @@ fn native_notice(_: tauri::AppHandle, _: Value) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn continuity_pack_requires_bounded_identity_free_payload() {
+        let valid = json!({
+            "format":"hsp-session-continuity",
+            "version":1,
+            "exportedAt":"2026-10-21T00:00:00Z",
+            "source":{"title":"Task","workspace":"Project"},
+            "context":{"notes":"note","nextTask":"continue","tags":["review"],"messagesIncluded":true,"messages":[{"role":"assistant","seq":1,"text":"verified context"}],"historyIncomplete":false,"git":null,"checkpoint":null}
+        });
+        assert!(validate_continuity_content(&valid.to_string()).is_ok());
+        let mut with_identity = valid.clone();
+        with_identity["context"]["sessionId"] = json!("private-id");
+        assert!(validate_continuity_content(&with_identity.to_string()).is_err());
+        let mut oversized = valid.clone();
+        oversized["context"]["messages"] = json!([{"role":"system","seq":1,"text":"not allowed"}]);
+        assert!(validate_continuity_content(&oversized.to_string()).is_err());
+        assert!(validate_continuity_content(&" ".repeat(1_048_577)).is_err());
+    }
+
     #[test]
     fn transition_is_not_a_success_or_failure_inference() {
         let old = json!({"running":true,"pending":null});

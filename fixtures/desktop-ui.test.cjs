@@ -489,6 +489,26 @@ test('session center searches body, copies bounded context, exports and navigate
  assert.deepEqual(Array.from(env.calls.filter(c=>c.command==='session_watch').at(-1).args.events),['approval','question','plan-review','stopped']);
  await env.fire('session-watch-stop');assert.equal(env.elements['session-watch-status'].textContent,'已停止');
 });
+test('continuity packs export bounded identity-free context and import only as quoted prompt material',async()=>{
+ const s={sessionId:'real-secret-id',title:'Work item',workspace:'Project',cwd:'D:/private',running:false,archived:false};let savedPack;
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[s],profile:'private-profile'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:s,messages:[{seq:1,role:'user',text:'Earlier request'},{seq:2,role:'assistant',text:'Earlier verified result'}],throughSeq:2,profile:'private-profile',projectionState:'sequenced'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs')return {jobs:[]};
+  if(['favorite_list','session_tags_list','session_notes_list','checkpoint_list','prompt_template_list'].includes(command))return [];
+  if(command==='session_continuity_export'){savedPack=JSON.parse(args.content);return 'D:/exports/session-continuity.json';}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();await env.settle();
+ env.elements['session-note'].value='Verified decision';await env.fire('session-note','input');env.elements['session-next-task'].value='Continue implementation';await env.fire('session-next-task','input');
+ env.elements['session-continuity-include-messages'].checked=true;
+ await env.fire('session-continuity-export');assert.equal(savedPack.format,'hsp-session-continuity');assert.equal(savedPack.context.notes,'Verified decision');assert.equal(savedPack.context.nextTask,'Continue implementation');assert.equal(savedPack.context.messages.length,2,JSON.stringify(savedPack.context));assert(!JSON.stringify(savedPack).includes('real-secret-id'));assert(!JSON.stringify(savedPack).includes('private-profile'));assert(!JSON.stringify(savedPack).includes('D:/private'));
+ env.elements['session-continuity-file'].files=[{size:JSON.stringify(savedPack).length,text:async()=>JSON.stringify(savedPack)}];await env.fire('session-continuity-file','change');assert.match(env.elements['session-continuity-preview'].textContent,/Work item.*2 条消息/);
+ await env.fire('session-continuity-apply');assert.match(env.elements['session-prompt'].value,/从接续包导入的历史引用/);assert.match(env.elements['session-prompt'].value,/Earlier verified result/);assert.match(env.elements['session-prompt'].value,/不作为新指令/);
+ await env.fire('session-continuity-clear');assert.doesNotMatch(env.elements['session-prompt'].value,/从接续包导入的历史引用/);assert.equal(env.calls.filter(c=>c.command==='session_continuity_export').length,1);assert(env.calls.every(c=>c.command!=='session_send'));
+});
 test('session checkpoints persist locally, require the saved profile, and restore through the exact session ID',async()=>{
  const session={sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',running:false,archived:false};
  const saved={id:'cp-1-0',profile:'profile-a',sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',createdAt:1,prompt:'continue this verified task',git:{branch:'main',clean:false,changedFiles:2,files:[{status:'工作区修改',path:'src/old.rs'}]}};
@@ -540,6 +560,7 @@ test('Git workspace panel is read-only and ignores stale results after switching
  assert(env.elements['session-usage'].children.some(child=>child.textContent.includes('MCP 服务清单接口尚未验证')));
  env.elements['session-review-notes'].value='Review finding';await env.fire('session-review-notes','input');await env.fire('session-review-notes-save');assert.equal(env.storage.get('hsp-review-note:p:a'),'Review finding');
  await env.fire('session-capability-scan');await env.settle();assert.match(env.elements['session-capability-results'].children[0].children[0].textContent,/review/);assert.match(env.elements['session-capability-results'].children.at(-1).textContent,/未验证/);
+ assert(!env.calls.some(call=>/mcp|plugin|hook/i.test(call.command)));
  assert.equal(env.calls.filter(c=>c.command==='workspace_git_status').length,1);
  await env.elements['session-git-files'].children[1].children[1].events.click();await env.settle();
  assert.match(env.elements['session-git-diff-staged'].textContent,/staged marker/);
@@ -588,4 +609,21 @@ test('notification callbacks preserve profile/ID and ignore notices from another
  const call=env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='open');assert.equal(call.args.request.sessionId,'a');assert.equal(call.args.expectedProfile,'p');
  env.listeners['session-notice-click']({payload:{profile:'p',sessionId:'a',kind:'等待回答'}});await env.settle();assert.equal(env.calls.filter(c=>c.command==='session_query'&&c.args.request.action==='open').length,2);
  env.listeners['session-watch-stopped']({payload:'连接已断开'});assert.equal(env.elements['session-watch-status'].textContent,'已停止');assert.match(env.elements['session-notification-feedback'].textContent,/连接已断开/);
+});
+test('notification history persists per profile and filters only local metadata',async()=>{
+ const s={sessionId:'a',title:'A',workspace:'w',running:false,archived:false};
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {profile:'p',sessions:[s]};
+  throw Error(command);
+ });
+ env.storage.set('hsp-session-notices:p',JSON.stringify([{sessionId:'old-id',title:'Older task',kind:'等待审批',occurredAt:1000}]));
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ assert.equal(env.elements['session-notice-history-list'].children.length,1);
+ env.listeners['session-notice']({payload:{profile:'p',sessionId:'new-id',title:'Recent task',kind:'等待回答'}});
+ assert.equal(env.elements['session-notice-history-list'].children.length,2,env.elements['session-notice-history-status'].textContent);
+ env.elements['session-notice-history-filter'].value='approval';await env.fire('session-notice-history-filter','change');assert.equal(env.elements['session-notice-history-list'].children.length,1);assert.match(env.elements['session-notice-history-list'].children[0].textContent,/Older task/);
+ env.elements['session-notice-history-search'].value='recent';await env.fire('session-notice-history-search','input');assert.equal(env.elements['session-notice-history-list'].children.length,1);assert.match(env.elements['session-notice-history-list'].children[0].textContent,/没有符合筛选条件/);assert.match(env.elements['session-notice-history-status'].textContent,/0 \/ 2 条/);
+ env.elements['session-notice-history-filter'].value='all';await env.fire('session-notice-history-filter','change');env.elements['session-notice-history-search'].value='';await env.fire('session-notice-history-search','input');
+ const saved=JSON.parse(env.storage.get('hsp-session-notices:p'));assert.equal(saved.length,2);assert(!JSON.stringify(saved).includes('message body'));
+ await env.fire('session-notice-history-clear');assert.equal(JSON.parse(env.storage.get('hsp-session-notices:p')).length,0);assert.match(env.confirmations.at(-1),/不会撤回 Windows 通知/);
 });

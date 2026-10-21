@@ -1,5 +1,5 @@
 (() => {
-  // Pinned to installed 0.2.0-rc.2; Rust verifies the ASAR digest before using this adapter.
+  // Pinned to the allowlisted 0.2.0-rc.2 and 0.2.1-rc.2 builds; Rust verifies the ASAR digest first.
   const rpc = async (endpoint, args, expectedOrigin) => {
     if(expectedOrigin && (await window.dshDesktopBoot.ready()).streamBaseUrl!==expectedOrigin)throw Error('Host generation changed');
     const rpcId = crypto.randomUUID();

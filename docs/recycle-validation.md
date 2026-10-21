@@ -1,7 +1,9 @@
 # 原生回收站实现与本机验证
 
-当前适配对象为 Windows DeepSeek Harness 0.2.0-rc.2，安装包 SHA256：
-`983ca71114e6dfd353fc79af5a1f9481a250ee64c2a3c757673029b811b23bc2`。
+当前适配对象为经过核验的 Windows Harness 安装包：
+
+- 0.2.0-rc.2：`983ca71114e6dfd353fc79af5a1f9481a250ee64c2a3c757673029b811b23bc2`
+- 0.2.1-rc.2：`47874618bf5b3011fcaac10cd4c85f69da333e70d4f99b921207c78d0999512a`
 
 以本机安装资源为准核对：`dsh-api-workspace-controller` 的 `workspace/archiveSession`、`workspace/unarchiveSession`、`workspace/follow`；`dsh-api-session-controller` 的 `session/list`；`dsh-api-gateway` 的 `/api` unary RPC 与 `/api/remote.mux` 流协议。请求封装为实际协议的 `client-request` / `payload.args`，校验响应关联 ID。源码提取在 `target/source-evidence/`，只读安装包，未更改 Harness。
 
@@ -22,6 +24,8 @@ Rust 核实 9223 监听进程、实际 exe 路径、安装包摘要，以及该�
 - Rust 与 JS 测试是自动测试；实际归档与恢复闭环是以上本机专用会话验证。桌面点击/视觉验收仍需打开新版 exe。
 
 未实现永久删除：界面按钮禁用，没有删除 endpoint、清理会话文件或改写 Harness 数据库。
+
+2026-10-21 对本机 0.2.1-rc.2 安装包进行只读复核：主程序路径与 9223 监听进程一致，backend 唯一子进程携带规范 `profiles\\desktop` 参数；会话与工作区控制器的 `archiveSession` / `unarchiveSession` RPC 契约及 workspace registry 归档集合与此前核验版一致。新增摘要进入严格白名单。此次只读检查没有执行归档、恢复或删除操作。
 
 使用：正常退出旧 Harness Plus，打开 `desktop/src-tauri/target/release/hsp-desktop.exe`，在“会话回收站”点击“安装回收站增强”，重新打开 Harness 会话菜单。回收站支持单项恢复、选择批量恢复、标题/工作区搜索及手动刷新。
 

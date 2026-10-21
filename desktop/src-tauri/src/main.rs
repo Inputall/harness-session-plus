@@ -586,6 +586,7 @@ async fn install_recycle(app: tauri::AppHandle) -> Result<Value, UiError> {
     *state.recycle_cancel.lock().unwrap() = Some(cancel.clone());
     let root = state.root.clone();
     let worker_app = app.clone();
+    let adapter_version = identity.adapter.clone();
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(600));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -648,7 +649,7 @@ async fn install_recycle(app: tauri::AppHandle) -> Result<Value, UiError> {
         let _ = worker_app.emit("recycle-disconnected", ());
     });
     Ok(
-        serde_json::json!({"injection":status,"records":records,"adapter":"0.2.0-rc.2","identityVerified":true}),
+        serde_json::json!({"injection":status,"records":records,"adapter":adapter_version,"identityVerified":true}),
     )
 }
 
@@ -970,6 +971,7 @@ fn main() {
             session_center::session_query,
             session_center::session_watch,
             session_center::session_export,
+            session_center::session_continuity_export,
             session_center::session_notification_test,
             checkpoints::checkpoint_list,
             checkpoints::checkpoint_create,

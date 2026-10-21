@@ -127,7 +127,7 @@ pub struct DeleteTarget {
     pub eligible: bool,
     pub reason: String,
 }
-pub const DELETE_BLOCKED_REASON: &str = "当前 Harness 0.2.0-rc.2 未提供已验证的会话永久删除接口。搜索索引清理及迁移临时文件清理不能用于删除会话；离线日志、工作区引用、缓存与附件的完整清理尚未验证。";
+pub const DELETE_BLOCKED_REASON: &str = "当前 Harness 未提供已验证的会话永久删除接口。搜索索引清理及迁移临时文件清理不能用于删除会话；离线日志、工作区引用、缓存与附件的完整清理尚未验证。";
 
 pub async fn delete_preflight(
     client: &Client,
@@ -160,7 +160,7 @@ pub async fn delete_preflight(
                 Ok(_) if !archived(&current, &id)? => {
                     "原生会话已取消归档，请刷新回收站。".to_string()
                 }
-                Ok(_) => DELETE_BLOCKED_REASON.to_string(),
+                Ok(_) => format!("Harness {}：{}", identity.adapter, DELETE_BLOCKED_REASON),
             },
         };
         targets.push(DeleteTarget {
@@ -174,7 +174,7 @@ pub async fn delete_preflight(
         supported: false,
         dry_run: true,
         adapter: identity.adapter.clone(),
-        reason: DELETE_BLOCKED_REASON.into(),
+        reason: format!("Harness {}：{}", identity.adapter, DELETE_BLOCKED_REASON),
         targets,
     })
 }
