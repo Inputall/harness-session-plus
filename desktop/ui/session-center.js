@@ -16,6 +16,8 @@
     el('tags-input').value='';
     el('excerpts').replaceChildren();el('prompt').value='';el('next-task').value='';el('prompt').readOnly=true;
     hub.gitSessionId=null;hub.gitGeneration++;el('git-summary').textContent='选择包含 Git 仓库目录的会话后读取。';el('git-files').replaceChildren(node('p','尚未读取 Git 状态。','session-empty'));el('git-commits').textContent='—';el('git-refresh').disabled=true;
+    el('git-diff').disabled=true;el('git-diff-status').textContent='选择包含 Git 仓库的会话后读取。';el('git-diff-staged').textContent='—';el('git-diff-unstaged').textContent='—';
+    el('rules-read').disabled=true;el('rules-status').textContent='选择包含工作区目录的会话后读取。';el('rules-files').replaceChildren(node('p','尚未读取项目规则。','session-empty'));
     el('usage').replaceChildren(node('p','选择会话后读取 Harness 已记录的数据。','session-empty'));
     hub.noteDirty=false;el('note').value='';el('note-save').disabled=true;el('note-status').textContent='备注按当前 profile 和会话 ID 保存。';
     el('jobs').replaceChildren(node('p','尚未读取后台任务。','session-empty'));el('jobs-status').textContent='选择会话后读取当前后台任务名册。';el('jobs-refresh').disabled=true;
@@ -124,10 +126,42 @@
     el('git-commits').textContent=value.commits.length?value.commits.join('\n'):'没有可显示的提交。';
   }
   async function loadGit(sessionId=hub.gitSessionId){
-    if(!sessionId||!hub.profile)return;hub.gitSessionId=sessionId;const generation=++hub.gitGeneration;el('git-refresh').disabled=true;el('git-summary').textContent='正在读取 Git 只读状态…';
-    try{const value=await invoke('workspace_git_status',{sessionId,expectedProfile:hub.profile});if(generation===hub.gitGeneration)renderGit(value);}
-    catch(e){if(generation===hub.gitGeneration){el('git-summary').textContent=message(e);el('git-files').replaceChildren(node('p','Git 状态不可用；本工具未执行任何写操作。','session-empty'));el('git-commits').textContent='—';}}
+    if(!sessionId||!hub.profile)return;hub.gitSessionId=sessionId;const generation=++hub.gitGeneration,profile=hub.profile;el('git-refresh').disabled=true;el('git-diff').disabled=true;el('git-diff-status').textContent='先读取 Git 状态…';el('git-summary').textContent='正在读取 Git 只读状态…';
+    try{const value=await invoke('workspace_git_status',{sessionId,expectedProfile:profile});if(generation===hub.gitGeneration&&hub.profile===profile){renderGit(value);el('git-diff').disabled=false;el('git-diff-status').textContent='状态已读取。点击“读取差异”查看已跟踪文件的暂存与未暂存改动。';}}
+    catch(e){if(generation===hub.gitGeneration){el('git-summary').textContent=message(e);el('git-files').replaceChildren(node('p','Git 状态不可用；本工具未执行任何写操作。','session-empty'));el('git-commits').textContent='—';el('git-diff-status').textContent='Git 状态不可用，无法读取差异。';}}
     finally{if(generation===hub.gitGeneration)el('git-refresh').disabled=!hub.gitSessionId;}
+  }
+  function renderGitDiff(value){
+    const renderPart=(target,text,truncated)=>{target.textContent=text||'没有差异。';if(truncated)target.textContent+='\n\n[输出已截断：该区域最多显示 96 KiB]';};
+    renderPart(el('git-diff-staged'),value.staged,value.stagedTruncated);renderPart(el('git-diff-unstaged'),value.unstaged,value.unstagedTruncated);
+    el('git-diff-status').textContent='差异已读取；只读操作，没有暂存、提交或修改文件。';
+  }
+  async function loadGitDiff(){
+    const sessionId=hub.gitSessionId,profile=hub.profile,generation=hub.gitGeneration;
+    if(!sessionId||!profile||!hub.detail||hub.detail.session.sessionId!==sessionId)return;
+    el('git-diff').disabled=true;el('git-diff-status').textContent='正在读取差异…';
+    try{const value=await invoke('workspace_git_diff',{sessionId,expectedProfile:profile});if(generation===hub.gitGeneration&&profile===hub.profile&&sessionId===hub.gitSessionId)renderGitDiff(value);}
+    catch(e){if(generation===hub.gitGeneration&&profile===hub.profile&&sessionId===hub.gitSessionId)el('git-diff-status').textContent=`差异读取失败：${message(e)}；未执行写操作。`;}
+    finally{if(generation===hub.gitGeneration&&profile===hub.profile&&sessionId===hub.gitSessionId)el('git-diff').disabled=false;}
+  }
+  async function loadRules(){
+    const sessionId=hub.gitSessionId,profile=hub.profile,generation=hub.gitGeneration;
+    if(!sessionId||!profile||!hub.detail||hub.detail.session.sessionId!==sessionId)return;
+    el('rules-read').disabled=true;el('rules-status').textContent='正在读取常见项目规则文件…';
+    try{
+      const value=await invoke('workspace_rules',{sessionId,expectedProfile:profile});
+      if(generation!==hub.gitGeneration||profile!==hub.profile||sessionId!==hub.gitSessionId)return;
+      const target=el('rules-files');target.replaceChildren();
+      if(!value.files.length)target.append(node('p','在支持的常见位置未发现项目规则文件。','session-empty'));
+      for(const file of value.files){
+        const card=document.createElement('article');card.className='session-rule-card';
+        const header=document.createElement('header');header.append(node('strong',file.path));
+        header.append(node('span',`${file.bytes.toLocaleString('zh-CN')} 字节${file.truncated?' · 内容已截断':''}`,'subtle'));
+        const content=node('pre',file.content);card.append(header,content);target.append(card);
+      }
+      el('rules-status').textContent=`读取 ${value.files.length} 个文件；最多 32 个、单个 32 KiB、总计 256 KiB。仅展示文本，不会执行或自动注入。`;
+    }catch(e){if(generation===hub.gitGeneration&&profile===hub.profile&&sessionId===hub.gitSessionId){el('rules-files').replaceChildren(node('p',`项目规则读取失败：${message(e)}`,'session-empty'));el('rules-status').textContent='读取失败；没有执行或修改规则文件。';}}
+    finally{if(generation===hub.gitGeneration&&profile===hub.profile&&sessionId===hub.gitSessionId)el('rules-read').disabled=false;}
   }
   function render() {
     const text=el('search').value.trim().toLocaleLowerCase();
@@ -360,7 +394,7 @@
       el('open').disabled=detail.session.archived;el('watch-add').disabled=detail.session.archived||hub.watchBusy;
       el('favorite-toggle').disabled=false;el('favorite-toggle').textContent=hub.favorites.has(id)?'取消收藏':'收藏会话';
       el('tags-input').value=(hub.tags.get(id)||[]).join(', ');el('tags-save').disabled=false;
-      hub.gitSessionId=detail.session.cwd?detail.session.sessionId:null;el('git-refresh').disabled=!hub.gitSessionId;loadGit(hub.gitSessionId);
+      hub.gitSessionId=detail.session.cwd?detail.session.sessionId:null;el('git-refresh').disabled=!hub.gitSessionId;el('rules-read').disabled=!hub.gitSessionId;loadGit(hub.gitSessionId);
       el('watch-add').textContent=hub.watched.has(id)?'取消关注':'关注此会话';render();
     }catch(e){if(generation===hub.detailGeneration){clearDetail();error(message(e));}}
   }
@@ -430,6 +464,8 @@
     catch(e){toast(message(e),true);}finally{el('checkpoint-save').disabled=!hub.detail;}
   });
   el('git-refresh').addEventListener('click',()=>loadGit());
+  el('git-diff').addEventListener('click',loadGitDiff);
+  el('rules-read').addEventListener('click',loadRules);
   el('watch-add').addEventListener('click',()=>{if(!hub.detail)return;const ids=new Set(hub.watched),id=hub.detail.session.sessionId;ids.has(id)?ids.delete(id):ids.add(id);return watch(ids);});
   el('watch-stop').addEventListener('click',()=>watch(new Set()));
   el('native').addEventListener('change',()=>{if(hub.watched.size)watch(hub.watched);});

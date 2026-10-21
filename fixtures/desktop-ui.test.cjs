@@ -438,12 +438,22 @@ test('Git workspace panel is read-only and ignores stale results after switching
   if(command==='session_query'&&args.request.action==='list')return {sessions:[first,second],profile:'p'};
   if(command==='session_query'&&args.request.action==='detail')return {session:args.request.sessionId==='a'?first:second,messages:[],throughSeq:1,profile:'p'};
   if(command==='workspace_git_status'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {cwd:'D:/repo-a',branch:'main',clean:false,files:[{status:'工作区修改',path:'src/main.rs'}],commits:['abc123\t2026-10-19\tread-only']};}
+  if(command==='workspace_git_diff'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {staged:'diff --cached staged marker',stagedTruncated:false,unstaged:'diff -- unstaged marker',unstagedTruncated:false};}
+  if(command==='workspace_rules'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {files:[{path:'AGENTS.md',bytes:23,truncated:false,content:'Rule text <script> inert'}]};}
   throw Error(command);
  });
  vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
  await env.elements['session-results'].children[0].events.click();await env.settle();await env.settle();
  assert.match(env.elements['session-git-summary'].textContent,/D:\/repo-a/);assert.match(env.elements['session-git-files'].children[0].children[1].textContent,/src\/main\.rs/);
  assert.equal(env.calls.filter(c=>c.command==='workspace_git_status').length,1);
+ await env.elements['session-git-diff'].events.click();await env.settle();
+ assert.match(env.elements['session-git-diff-staged'].textContent,/staged marker/);
+ assert.match(env.elements['session-git-diff-unstaged'].textContent,/unstaged marker/);
+ assert.equal(env.calls.filter(c=>c.command==='workspace_git_diff').length,1);
+ await env.elements['session-rules-read'].events.click();await env.settle();
+ assert.equal(env.elements['session-rules-files'].children.length,1);
+ assert.equal(env.elements['session-rules-files'].children[0].children[1].textContent,'Rule text <script> inert');
+ assert.equal(env.calls.filter(c=>c.command==='workspace_rules').length,1);
  assert(env.calls.every(c=>!['git_commit','git_reset','git_checkout','git_add'].includes(c.command)));
  await env.elements['session-git-refresh'].events.click();assert.equal(env.calls.filter(c=>c.command==='workspace_git_status').length,2);
 });
