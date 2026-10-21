@@ -986,6 +986,7 @@ fn main() {
             session_notes::session_notes_save,
             workspace::workspace_git_status,
             workspace::workspace_git_diff,
+            workspace::workspace_git_file_diff,
             workspace::workspace_rules,
             install_recycle,
             recycle_restore_preference,

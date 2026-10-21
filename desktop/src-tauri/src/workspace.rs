@@ -3,6 +3,7 @@ use crate::{recycle_error, UiError};
 use hsp_core::{recycle, sessions};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{path::Path, process::Stdio, time::Duration};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -27,6 +28,15 @@ pub(crate) struct GitCheckpoint {
     pub branch: String,
     pub clean: bool,
     pub changed_files: usize,
+    #[serde(default)]
+    pub files: Vec<GitFileSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitFileSnapshot {
+    pub status: String,
+    pub path: String,
 }
 
 pub(crate) async fn git_checkpoint(cwd: &Path) -> Option<GitCheckpoint> {
@@ -42,10 +52,20 @@ pub(crate) async fn git_checkpoint(cwd: &Path) -> Option<GitCheckpoint> {
     .await
     .ok()?;
     let (branch, files) = parse_status(&status);
+    if files.len() > 10_000 {
+        return None;
+    }
     Some(GitCheckpoint {
         branch,
         clean: files.is_empty(),
         changed_files: files.len(),
+        files: files
+            .into_iter()
+            .map(|file| GitFileSnapshot {
+                status: file.status,
+                path: file.path,
+            })
+            .collect(),
     })
 }
 
@@ -110,6 +130,14 @@ async fn git(cwd: &Path, args: &[&str]) -> Result<String, UiError> {
 }
 
 async fn git_diff(cwd: &Path, cached: bool) -> Result<(String, bool), UiError> {
+    git_diff_path(cwd, cached, None).await
+}
+
+async fn git_diff_path(
+    cwd: &Path,
+    cached: bool,
+    path: Option<&str>,
+) -> Result<(String, bool), UiError> {
     let read = async {
         let mut command = Command::new("git");
         command
@@ -118,6 +146,7 @@ async fn git_diff(cwd: &Path, cached: bool) -> Result<(String, bool), UiError> {
             .arg("--no-optional-locks")
             .arg("-c")
             .arg("core.fsmonitor=false")
+            .arg("--literal-pathspecs")
             .arg("diff")
             .arg("--no-ext-diff")
             .arg("--no-textconv")
@@ -125,6 +154,9 @@ async fn git_diff(cwd: &Path, cached: bool) -> Result<(String, bool), UiError> {
             .arg("--unified=3");
         if cached {
             command.arg("--cached");
+        }
+        if let Some(path) = path {
+            command.arg("--").arg(path);
         }
         let mut child = command
             .stdin(Stdio::null())
@@ -162,6 +194,26 @@ async fn git_diff(cwd: &Path, cached: bool) -> Result<(String, bool), UiError> {
     timeout(Duration::from_secs(10), read)
         .await
         .map_err(|_| UiError::new("workspace", "Git 差异检查超时，已停止读取。"))?
+}
+
+fn safe_review_path(path: &str) -> Result<(), UiError> {
+    if path.is_empty() || path.len() > 4096 || path.contains('\0') {
+        return Err(UiError::new("workspace", "变更文件路径无效。"));
+    }
+    let parsed = Path::new(path);
+    if parsed.is_absolute()
+        || parsed.components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err(UiError::new("workspace", "拒绝读取工作区之外的文件。"));
+    }
+    Ok(())
 }
 
 fn rule_candidates(root: &Path) -> Vec<std::path::PathBuf> {
@@ -340,6 +392,58 @@ pub async fn workspace_git_diff(
 }
 
 #[tauri::command]
+pub async fn workspace_git_file_diff(
+    session_id: String,
+    expected_profile: String,
+    path: String,
+    state: tauri::State<'_, crate::Desktop>,
+) -> Result<Value, UiError> {
+    if session_id.is_empty() || session_id.len() > 256 || expected_profile.is_empty() {
+        return Err(UiError::new("workspace", "会话身份无效，请刷新会话列表。"));
+    }
+    safe_review_path(&path)?;
+    let settings = state.settings.lock().unwrap().clone();
+    let root = session_root(&settings, &session_id, &expected_profile).await?;
+    tokio::task::spawn(async move {
+        let status = git(
+            &root,
+            &["status", "--porcelain=v1", "--untracked-files=normal"],
+        )
+        .await?;
+        let (_, files) = parse_status(&status);
+        let Some(file) = files.iter().find(|file| file.path == path) else {
+            return Err(UiError::new(
+                "workspace",
+                "文件已不在当前变更清单中，请刷新 Git 状态。",
+            ));
+        };
+        if file.status == "未跟踪" {
+            return Err(UiError::new(
+                "workspace",
+                "未跟踪文件仅显示路径，不读取其内容。",
+            ));
+        }
+        let (staged, staged_truncated) = git_diff_path(&root, true, Some(&path)).await?;
+        let (unstaged, unstaged_truncated) = git_diff_path(&root, false, Some(&path)).await?;
+        let mut digest = Sha256::new();
+        digest.update(path.as_bytes());
+        digest.update(&staged);
+        digest.update(&unstaged);
+        let fingerprint = format!("{:x}", digest.finalize());
+        Ok(json!({
+            "path": path,
+            "staged": staged,
+            "stagedTruncated": staged_truncated,
+            "unstaged": unstaged,
+            "unstagedTruncated": unstaged_truncated,
+            "fingerprint": fingerprint,
+        }))
+    })
+    .await
+    .map_err(|_| UiError::new("workspace", "单文件差异读取任务中断。"))?
+}
+
+#[tauri::command]
 pub async fn workspace_rules(
     session_id: String,
     expected_profile: String,
@@ -357,7 +461,9 @@ pub async fn workspace_rules(
 
 #[cfg(test)]
 mod tests {
-    use super::{git, git_diff, parse_status, read_rules, MAX_DIFF_OUTPUT};
+    use super::{
+        git, git_diff, git_diff_path, parse_status, read_rules, safe_review_path, MAX_DIFF_OUTPUT,
+    };
     #[test]
     fn parses_branch_and_worktree_states_without_mutation() {
         let (branch, files) = parse_status(
@@ -367,6 +473,13 @@ mod tests {
         assert_eq!(files.len(), 3);
         assert_eq!(files[0].status, "已暂存修改");
         assert_eq!(files[2].status, "未跟踪");
+    }
+
+    #[test]
+    fn review_paths_cannot_escape_the_repository() {
+        assert!(safe_review_path("src/main.rs").is_ok());
+        assert!(safe_review_path("../outside.txt").is_err());
+        assert!(safe_review_path("C:\\outside.txt").is_err());
     }
 
     #[tokio::test]
@@ -464,7 +577,13 @@ mod tests {
         let index_before = fs::read(root.join(".git/index")).unwrap();
         let (staged, staged_truncated) = git_diff(&root, true).await.unwrap();
         let (unstaged, unstaged_truncated) = git_diff(&root, false).await.unwrap();
+        let (single, single_truncated) = git_diff_path(&root, false, Some("unstaged.txt"))
+            .await
+            .unwrap();
         assert!(!staged_truncated && !unstaged_truncated);
+        assert!(!single_truncated && single.contains("WORKTREE_ONLY"));
+        assert!(!single.contains("INDEX_ONLY"));
+        assert!(!single.contains("tracked.txt"));
         assert!(staged.contains("INDEX_ONLY"));
         assert!(!staged.contains("WORKTREE_ONLY"));
         assert!(unstaged.contains("WORKTREE_ONLY"));

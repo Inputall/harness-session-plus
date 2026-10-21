@@ -1,10 +1,13 @@
 "use strict";
 (() => {
-  const hub = {sessions:[], profile:null, detail:null, gitSessionId:null, gitGeneration:0, checkpoints:[], favorites:new Set(), tags:new Map(), hits:new Map(), searchQuery:null, hasMore:false,
+  const hub = {sessions:[], profile:null, detail:null, gitSessionId:null, gitGeneration:0, gitFiles:[], gitBranch:'', gitCwd:'', reviewPath:null, reviewDiff:null, observerActivity:[], observerUpdatedAt:null, jobOverview:null,jobOverviewBusy:false,jobOverviewGeneration:0,runStats:null,runStatsBusy:false,runStatsGeneration:0,checkpoints:[], favorites:new Set(), tags:new Map(), hits:new Map(), searchQuery:null, hasMore:false,
     loaded:false, loading:false, generation:0, detailGeneration:0, page:0, watched:new Set(), watchBusy:false, searchInfo:'',compareMode:false,compareIds:new Set(),compareGeneration:0,batchMode:false,batchIds:new Set(),batchBusy:false,switcherOpen:false,templates:[],templatesLoaded:false,templateGeneration:0,editingTemplateId:'',notes:new Map(),notesGeneration:0,noteDirty:false};
   const el = id => document.getElementById(`session-${id}`);
   const node = (tag, text, cls) => {const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;};
   const message = error => error?.message || String(error || '操作失败，请重新检查连接。');
+  const jobTime=value=>{if(!Number.isSafeInteger(value)||value<0)return null;const date=new Date(value<100000000000?value*1000:value);return Number.isNaN(date.getTime())?null:date;};
+  const jobDuration=job=>{const start=jobTime(job.startedAt);if(!start||start.getTime()<Date.UTC(2010,0,1)||start.getTime()>Date.now()+60000)return null;const end=job.status==='running'?Date.now():(jobTime(job.finishedAt)?.getTime()||Date.now());return Math.max(0,end-start.getTime());};
+  const durationLabel=ms=>{if(!Number.isFinite(ms))return '时长不可用';const minutes=Math.floor(ms/60000);return minutes<60?`${minutes} 分钟`:`${Math.floor(minutes/60)} 小时 ${minutes%60} 分钟`;};
   const watchEventIds=['approval','question','plan-review','stopped','error'];
   function watchEvents(){return watchEventIds.filter(id=>el(`watch-${id}`).checked);}
   function saveWatchPreferences(){
@@ -20,17 +23,21 @@
     }catch{el('notification-feedback').textContent='已忽略无效的本机提醒规则，使用默认设置。';}
   }
   const query = (request, profile=hub.profile) => invoke('session_query',{request,expectedProfile:profile});
+  const reviewNoteKey=(profile,sessionId)=>`hsp-review-note:${encodeURIComponent(profile||'')}:${encodeURIComponent(sessionId||'')}`;
   const label = s => s.archived?'已归档':s.pending==='approval'?'等待审批':s.pending==='question'?'等待回答':s.pending==='plan-review'?'等待计划审阅':s.running===true?'运行中':s.running===false?'未运行':'运行状态未知';
+  const observerLabel = s => !s.statusObserved?'等待状态未观测':s.pending==='approval'?'等待审批':s.pending==='question'?'等待回答':s.pending==='plan-review'?'等待计划审阅':s.running===true?'运行中':s.completed===true?'已完成 · 未读':s.running===false?'未运行':'运行状态未知';
   function error(value) {el('error').hidden=!value;el('error').textContent=value||'';}
   function clearBatch(mode=false){hub.batchMode=mode;hub.batchIds.clear();el('batch-mode').textContent=mode?'退出批量整理':'批量整理';el('batch-actions').hidden=!mode;el('batch-count').textContent=mode?'已选择 0 个会话':'未选择会话';for(const id of ['batch-favorite','batch-unfavorite','batch-tag-save'])el(id).disabled=true;}
   function clearCompare(mode=false){hub.compareGeneration++;hub.compareMode=mode;hub.compareIds.clear();if(mode)clearBatch(false);el('compare-panel').hidden=true;el('compare-results').replaceChildren(node('p','选择两个会话后查看并排指标。','session-empty'));el('compare-status').textContent=mode?'已选择 0/2 个会话':'选择两个会话后比较';el('compare-mode').textContent=mode?'退出比较选择':'选择会话比较';el('compare-run').disabled=true;}
   function clearDetail() {
     hub.detail=null;hub.detailGeneration++;
+    el('capability-scan').disabled=true;el('review-notes-save').disabled=true;el('review-notes').value='';
     el('detail-title').textContent='选择一个会话';el('detail-meta').textContent='查看真实消息摘录，再生成继续任务提示词。';
+    el('timeline-status').textContent='按持久事件序号展示最近一页可验证的用户/助手消息。';
     el('tags-input').value='';
     el('excerpts').replaceChildren();el('prompt').value='';el('next-task').value='';el('prompt').readOnly=true;
-    hub.gitSessionId=null;hub.gitGeneration++;el('git-summary').textContent='选择包含 Git 仓库目录的会话后读取。';el('git-files').replaceChildren(node('p','尚未读取 Git 状态。','session-empty'));el('git-commits').textContent='—';el('git-refresh').disabled=true;
-    el('git-diff').disabled=true;el('git-diff-status').textContent='选择包含 Git 仓库的会话后读取。';el('git-diff-staged').textContent='—';el('git-diff-unstaged').textContent='—';
+    hub.gitSessionId=null;hub.gitGeneration++;hub.gitFiles=[];hub.reviewPath=null;hub.reviewDiff=null;el('git-summary').textContent='选择包含 Git 仓库目录的会话后读取。';el('git-files').replaceChildren(node('p','尚未读取 Git 状态。','session-empty'));el('git-commits').textContent='—';el('git-refresh').disabled=true;el('review-export').disabled=true;el('review-progress').textContent='尚未读取变更';el('review-current-path').textContent='未选择文件';el('review-mark').disabled=true;
+    el('git-diff-status').textContent='选择已跟踪的变更文件查看差异。';el('git-diff-staged').textContent='—';el('git-diff-unstaged').textContent='—';
     el('rules-read').disabled=true;el('rules-status').textContent='选择包含工作区目录的会话后读取。';el('rules-files').replaceChildren(node('p','尚未读取项目规则。','session-empty'));
     el('usage').replaceChildren(node('p','选择会话后读取 Harness 已记录的数据。','session-empty'));
     hub.noteDirty=false;el('note').value='';el('note-save').disabled=true;el('note-status').textContent='备注按当前 profile 和会话 ID 保存。';
@@ -53,6 +60,26 @@
     const rows=[['当前协作模式',planLabel],['当前会话权限预设',typeof stats.permissionPreset==='string'?sessionLabel(stats.permissionPreset):'不可用'],['最近使用模型',route(models.lastUsed)],['下一次选择',route(models.next)],['未缓存输入 Token',fmt(usage.uncachedInputTokens)],['输出 Token',fmt(usage.outputTokens)],['缓存读取 Token',fmt(usage.cacheReadTokens)],['缓存写入 Token',fmt(usage.cacheWriteTokens)],['最近提示词压力',fmt(pressure.pressureTokens)],['预计下次提示词压力',fmt(pressure.projectedTokens)],['上下文窗口',fmt(pressure.contextWindow)]];
     for(const [label,value] of rows){const row=document.createElement('div');row.className='session-usage-row';row.append(node('span',label),node('strong',value));target.append(row);}
   }
+  function renderTimeline(detail){
+    const target=el('excerpts');target.replaceChildren();
+    if(detail.projectionState!=='sequenced'){
+      target.append(node('p',detail.projectionState==='migration-required'?'此会话需要 Harness 数据迁移，当前无法取得经过序号确认的历史页面。':'Harness 未提供可验证的历史游标，暂不显示时间线。','session-empty'));
+      el('timeline-status').textContent='时间线不可用；没有把缓存或未验证数据当作当前记录。';return;
+    }
+    const entries=(detail.messages||[]).filter(item=>['user','assistant'].includes(item.role)&&Number.isSafeInteger(item.seq)).map(item=>({kind:item.role==='user'?'用户':'助手',seq:item.seq,text:String(item.text||'')}));
+    if(detail.lastTurn&&Number.isSafeInteger(detail.lastTurn.seq))entries.push({kind:'轮次结束',seq:detail.lastTurn.seq,reason:String(detail.lastTurn.reason||'unknown')});
+    entries.sort((a,b)=>a.seq-b.seq);
+    if(!entries.length)target.append(node('p','此页没有可显示的用户/助手文本或轮次结束记录；图片、工具输出和推理内容不在本时间线范围内。','session-empty'));
+    for(const entry of entries){
+      const item=document.createElement('details');item.className='session-timeline-item';
+      const summary=document.createElement('summary');const preview=entry.text?entry.text.replace(/\s+/g,' ').slice(0,120):`结束原因（原生值）：${entry.reason}`;
+      summary.append(node('span',`#${entry.seq} · ${entry.kind}`,'session-timeline-seq'),node('span',preview,'session-timeline-preview'));item.append(summary);
+      if(entry.text)item.append(node('pre',entry.text,'session-timeline-content'));else item.append(node('p',`结束原因（原生值）：${entry.reason}`,'session-timeline-content'));
+      target.append(item);
+    }
+    const range=detail.hasMore?'最近一页，仍有更早事件':'本次返回的历史范围';
+    el('timeline-status').textContent=`${entries.length} 条可验证记录 · ${range} · 按事件序号排列；工具输出和推理内容不展示。`;
+  }
   async function loadSkills(sessionId, generation) {
     try {
       const result=await query({action:'skills',sessionId},hub.profile);
@@ -69,8 +96,8 @@
       const target=el('jobs');target.replaceChildren();
       if(!result.jobs.length){target.append(node('p','当前会话没有可见的后台任务。','session-empty'));el('jobs-status').textContent='已读取 Harness 后台任务名册';return;}
       const names={running:'运行中',stopping:'正在停止',completed:'已完成',killed:'已取消',failed:'失败'};
-      for(const job of result.jobs){const row=document.createElement('article');row.className='session-job-row';row.append(node('strong',job.kind||'后台任务'),node('span',names[job.status]||'未知状态','badge'));if(job.progress||job.detail)row.append(node('p',job.progress||job.detail));if(job.command)row.append(node('code',job.command));row.append(node('small',`ID ${job.id}${job.retainedBytes!==null?` · 保留输出 ${job.retainedBytes.toLocaleString('zh-CN')} 字节`:''}`));target.append(row);}
-      el('jobs-status').textContent=`已读取 ${result.jobs.length} 项；只显示首个名册快照`;
+      for(const job of result.jobs){const row=document.createElement('article');row.className='session-job-row';const age=jobDuration(job),longRunning=job.status==='running'&&age!==null&&age>=30*60*1000;row.append(node('strong',job.kind||'后台任务'),node('span',names[job.status]||'未知状态',`badge${job.status==='failed'?' warning':''}`));if(longRunning)row.append(node('span','运行超过 30 分钟','badge warning'));if(job.progress||job.detail)row.append(node('p',job.progress||job.detail));if(job.command)row.append(node('code',job.command));const started=jobTime(job.startedAt),finished=jobTime(job.finishedAt);const meta=[`ID ${job.id}`,started?`开始 ${started.toLocaleString('zh-CN')}`:'开始时间不可用',job.status==='running'&&age!==null?`已运行 ${durationLabel(age)}`:finished?`结束 ${finished.toLocaleString('zh-CN')}`:null,job.retainedBytes!==null?`保留输出 ${job.retainedBytes.toLocaleString('zh-CN')} 字节`:null].filter(Boolean);row.append(node('small',meta.join(' · ')));const disclosure=document.createElement('details');disclosure.className='session-job-detail';const summary=document.createElement('summary');summary.textContent='运行详情';disclosure.append(summary);if(job.progress)disclosure.append(node('p',`进度：${job.progress}`));if(job.detail)disclosure.append(node('p',`详情：${job.detail}`));if(job.command)disclosure.append(node('code',`命令：${job.command}`));if(!job.progress&&!job.detail&&!job.command)disclosure.append(node('p','Harness 未提供更多任务详情。','subtle'));row.append(disclosure);target.append(row);}
+      el('jobs-status').textContent=`已读取 ${result.jobs.length} 项 · 运行 ${result.jobs.filter(job=>job.status==='running').length} · 失败 ${result.jobs.filter(job=>job.status==='failed').length} · 当前只读名册，不保证包含已结束历史`;
     }catch(e){if(generation===hub.detailGeneration&&hub.profile===profile){el('jobs').replaceChildren(node('p',`后台任务名册不可用：${message(e)}`,'session-empty'));el('jobs-status').textContent='读取失败；没有启动或修改任何任务。';}}
     finally{if(generation===hub.detailGeneration&&hub.profile===profile)el('jobs-refresh').disabled=false;}
   }
@@ -81,6 +108,19 @@
       const row=document.createElement('article');row.className='checkpoint-row';
       const info=document.createElement('div');const git=checkpoint.git;const gitLabel=git?`Git ${git.branch} · ${git.clean?'干净':`${git.changedFiles} 项改动`}`:'Git 快照不可用';info.append(node('strong',sessionLabel(checkpoint.title)||'未命名会话'),node('small',`${sessionLabel(checkpoint.workspace)||'未分组'} · ${new Date(checkpoint.createdAt).toLocaleString('zh-CN')} · ${gitLabel}`));
       const actions=document.createElement('div');actions.className='button-group';
+      const compare=document.createElement('button');compare.type='button';compare.className='button small';compare.textContent='对比 Git 状态';compare.disabled=!checkpoint.git||checkpoint.profile!==hub.profile;
+      compare.addEventListener('click',async()=>{
+        compare.disabled=true;el('checkpoint-compare').hidden=false;el('checkpoint-compare-status').textContent='正在读取当前 Git 状态…';el('checkpoint-compare-result').replaceChildren();
+        try{
+          const current=await invoke('workspace_git_status',{sessionId:checkpoint.sessionId,expectedProfile:checkpoint.profile}),before=checkpoint.git;
+          const rows=[['分支',before.branch,current.branch,before.branch===current.branch],['工作区',before.clean?'干净':'有改动',current.clean?'干净':'有改动',before.clean===current.clean],['改动文件数量',String(before.changedFiles),String(current.files.length),before.changedFiles===current.files.length]];
+          const table=document.createElement('div');table.className='checkpoint-compare-grid';for(const [name,a,b,same] of rows)table.append(node('span',name),node('span',a),node('span',b),node('span',same?'一致':'不同',`badge${same?'':' warning'}`));
+          if(Array.isArray(before.files)&&before.files.length){const oldFiles=new Map(before.files.map(file=>[file.path,file.status])),newFiles=new Map((current.files||[]).map(file=>[file.path,file.status])),paths=[...new Set([...oldFiles.keys(),...newFiles.keys()])].sort(),fileRows=paths.map(path=>({path,before:oldFiles.get(path)||null,current:newFiles.get(path)||null})).filter(row=>row.before!==row.current).slice(0,200);const heading=node('h4',`逐文件状态变化 · ${fileRows.length}${paths.length>200?'（最多显示 200 项）':''}`);table.append(heading);if(!fileRows.length)table.append(node('p','检查点以来，受 Git 跟踪的变更文件清单未变化。','subtle'));for(const file of fileRows){const item=document.createElement('div');item.className='checkpoint-file-delta';item.append(node('code',file.path),node('span',file.before||'检查点后新增'),node('span',file.current||'当前已不存在'));table.append(item);}}
+          else table.append(node('p','此为旧版检查点，仅保存分支和改动数量，没有逐文件清单。','subtle'));
+          el('checkpoint-compare-result').replaceChildren(table);el('checkpoint-compare-status').textContent=`保存于 ${new Date(checkpoint.createdAt).toLocaleString('zh-CN')} · 比较 Git 状态及本机保存的文件路径/状态，不读取文件正文。`;
+        }catch(e){el('checkpoint-compare-status').textContent=`对比失败：${message(e)}`;}
+        finally{compare.disabled=!checkpoint.git||checkpoint.profile!==hub.profile;}
+      });
       const restore=document.createElement('button');restore.type='button';restore.className='button small';restore.textContent='恢复检查点';restore.disabled=!hub.profile||checkpoint.profile!==hub.profile;
       restore.addEventListener('click',async()=>{
         restore.disabled=true;
@@ -102,7 +142,7 @@
       if(restore.disabled)info.append(node('small','切换到保存此检查点的 Harness profile 后才能恢复。','subtle'));
       const remove=document.createElement('button');remove.type='button';remove.className='button small';remove.textContent='删除';
       remove.addEventListener('click',async()=>{if(!window.confirm('删除这条本机检查点？操作不可撤销，不会影响 Harness 会话。'))return;remove.disabled=true;try{await invoke('checkpoint_delete',{id:checkpoint.id});await loadCheckpoints();toast('检查点已删除。');}catch(e){toast(message(e),true);remove.disabled=false;}});
-      actions.append(restore,remove);row.append(info,actions);target.append(row);
+      actions.append(restore,remove,compare);row.append(info,actions);target.append(row);
     }
   }
   async function loadCheckpoints(){
@@ -149,31 +189,55 @@
     catch(e){toast(message(e),true);}finally{button.disabled=false;}
   }
   function renderGit(value){
-    el('git-summary').textContent=`${value.clean?'工作区干净':'有未提交改动'} · 分支 ${value.branch} · ${value.cwd}`;
-    el('git-files').replaceChildren();
-    if(!value.files.length)el('git-files').append(node('p','当前没有未提交文件。','session-empty'));
-    for(const file of value.files){const row=document.createElement('div');row.className='git-file-row';row.append(node('strong',file.status),node('span',file.path));el('git-files').append(row);}
+    hub.gitFiles=value.files||[];hub.gitBranch=value.branch||'未识别';hub.gitCwd=value.cwd||'';
+    el('git-summary').textContent=`${value.clean?'工作区干净':'有未提交改动'} · 分支 ${hub.gitBranch} · ${hub.gitCwd}`;
+    el('review-export').disabled=false;renderGitFiles();
     el('git-commits').textContent=value.commits.length?value.commits.join('\n'):'没有可显示的提交。';
   }
+  const reviewStorageKey=()=>`hsp-review:${encodeURIComponent(hub.profile||'')}:${encodeURIComponent(hub.gitSessionId||'')}`;
+  function reviewMarks(){try{const saved=JSON.parse(localStorage.getItem(reviewStorageKey())||'{}');return saved&&typeof saved==='object'?saved:{};}catch{return {};}}
+  function persistReviewMarks(value){try{localStorage.setItem(reviewStorageKey(),JSON.stringify(value));return true;}catch{toast('审阅标记无法保存到本机。',true);return false;}}
+  function savedReview(file){return reviewMarks()[file.path];}
+  function isReviewed(file){const mark=savedReview(file);return !!hub.reviewDiff&&hub.reviewPath===file.path&&!hub.reviewDiff.stagedTruncated&&!hub.reviewDiff.unstagedTruncated&&mark===hub.reviewDiff.fingerprint;}
+  function renderGitFiles(){
+    const target=el('git-files'),term=el('review-search').value.trim().toLocaleLowerCase();target.replaceChildren();
+    const visible=hub.gitFiles.filter(file=>!term||`${file.path} ${file.status}`.toLocaleLowerCase().includes(term));
+    const reviewed=hub.gitFiles.filter(file=>isReviewed(file)).length,needsCheck=hub.gitFiles.filter(file=>savedReview(file)&&!isReviewed(file)).length;
+    el('review-progress').textContent=`${reviewed} 项已核验 · ${needsCheck} 项待核验 · 共 ${hub.gitFiles.length} 项`;
+    if(!visible.length){target.append(node('p',hub.gitFiles.length?'没有匹配的变更文件。':'当前没有未提交文件。','session-empty'));return;}
+    const groups=[['已暂存',file=>file.status.startsWith('已暂存')],['未暂存',file=>file.status.startsWith('工作区')||file.status.includes('继续修改')],['未跟踪',file=>file.status==='未跟踪'],['其他',file=>!file.status.startsWith('已暂存')&&!file.status.startsWith('工作区')&&!file.status.includes('继续修改')&&file.status!=='未跟踪']];
+    for(const [title,match] of groups){const files=visible.filter(match);if(!files.length)continue;const section=document.createElement('section');section.className='git-review-group';section.append(node('h4',`${title} · ${files.length}`));
+      for(const file of files){const row=document.createElement('button');row.type='button';row.className=`git-file-row${hub.reviewPath===file.path?' selected':''}`;row.title=file.status==='未跟踪'?'未跟踪文件仅显示路径，不读取内容':'读取该文件暂存区与工作区差异';row.append(node('strong',file.status),node('span',file.path));if(isReviewed(file))row.append(node('small','已审阅','git-reviewed-label'));else if(savedReview(file))row.append(node('small',hub.reviewPath===file.path&&hub.reviewDiff?'差异已变化':'待核验','subtle'));else if(hub.reviewPath===file.path&&hub.reviewDiff)row.append(node('small','待审阅','subtle'));
+        row.addEventListener('click',()=>loadGitFile(file));section.append(row);
+      }target.append(section);
+    }
+  }
   async function loadGit(sessionId=hub.gitSessionId){
-    if(!sessionId||!hub.profile)return;hub.gitSessionId=sessionId;const generation=++hub.gitGeneration,profile=hub.profile;el('git-refresh').disabled=true;el('git-diff').disabled=true;el('git-diff-status').textContent='先读取 Git 状态…';el('git-summary').textContent='正在读取 Git 只读状态…';
-    try{const value=await invoke('workspace_git_status',{sessionId,expectedProfile:profile});if(generation===hub.gitGeneration&&hub.profile===profile){renderGit(value);el('git-diff').disabled=false;el('git-diff-status').textContent='状态已读取。点击“读取差异”查看已跟踪文件的暂存与未暂存改动。';}}
+    if(!sessionId||!hub.profile)return;hub.gitSessionId=sessionId;const generation=++hub.gitGeneration,profile=hub.profile;el('git-refresh').disabled=true;el('review-export').disabled=true;el('git-diff-status').textContent='正在读取 Git 状态…';el('git-summary').textContent='正在读取 Git 只读状态…';
+    try{const value=await invoke('workspace_git_status',{sessionId,expectedProfile:profile});if(generation===hub.gitGeneration&&hub.profile===profile){hub.reviewPath=null;hub.reviewDiff=null;renderGit(value);el('git-diff-status').textContent='选择一个已跟踪变更文件即可查看差异并标记审阅。';}}
     catch(e){if(generation===hub.gitGeneration){el('git-summary').textContent=message(e);el('git-files').replaceChildren(node('p','Git 状态不可用；本工具未执行任何写操作。','session-empty'));el('git-commits').textContent='—';el('git-diff-status').textContent='Git 状态不可用，无法读取差异。';}}
     finally{if(generation===hub.gitGeneration)el('git-refresh').disabled=!hub.gitSessionId;}
   }
   function renderGitDiff(value){
     const renderPart=(target,text,truncated)=>{target.textContent=text||'没有差异。';if(truncated)target.textContent+='\n\n[输出已截断：该区域最多显示 96 KiB]';};
     renderPart(el('git-diff-staged'),value.staged,value.stagedTruncated);renderPart(el('git-diff-unstaged'),value.unstaged,value.unstagedTruncated);
-    el('git-diff-status').textContent='差异已读取；只读操作，没有暂存、提交或修改文件。';
+    const truncated=value.stagedTruncated||value.unstagedTruncated;
+    el('git-diff-status').textContent=truncated?'差异输出已截断；为避免漏审，不允许标记为已审阅。':'差异已读取；只读操作，没有暂存、提交或修改文件。';
   }
-  async function loadGitDiff(){
-    const sessionId=hub.gitSessionId,profile=hub.profile,generation=hub.gitGeneration;
-    if(!sessionId||!profile||!hub.detail||hub.detail.session.sessionId!==sessionId)return;
-    el('git-diff').disabled=true;el('git-diff-status').textContent='正在读取差异…';
-    try{const value=await invoke('workspace_git_diff',{sessionId,expectedProfile:profile});if(generation===hub.gitGeneration&&profile===hub.profile&&sessionId===hub.gitSessionId)renderGitDiff(value);}
-    catch(e){if(generation===hub.gitGeneration&&profile===hub.profile&&sessionId===hub.gitSessionId)el('git-diff-status').textContent=`差异读取失败：${message(e)}；未执行写操作。`;}
-    finally{if(generation===hub.gitGeneration&&profile===hub.profile&&sessionId===hub.gitSessionId)el('git-diff').disabled=false;}
+  async function loadGitFile(file){
+    const sessionId=hub.gitSessionId,profile=hub.profile,generation=hub.gitGeneration;if(!sessionId||!profile)return;
+    hub.reviewPath=file.path;hub.reviewDiff=null;el('review-current-path').textContent=file.path;el('review-mark').disabled=true;el('git-diff-staged').textContent='正在读取…';el('git-diff-unstaged').textContent='正在读取…';
+    if(file.status==='未跟踪'){el('git-diff-staged').textContent='未跟踪文件内容不会读取。';el('git-diff-unstaged').textContent='未跟踪文件内容不会读取。';el('git-diff-status').textContent='仅显示路径；将文件纳入 Git 跟踪后才可查看差异。';renderGitFiles();return;}
+    el('git-diff-status').textContent='正在读取所选文件的差异…';renderGitFiles();
+    try{const value=await invoke('workspace_git_file_diff',{sessionId,expectedProfile:profile,path:file.path});if(generation!==hub.gitGeneration||profile!==hub.profile||sessionId!==hub.gitSessionId||hub.reviewPath!==file.path)return;hub.reviewDiff=value;renderGitDiff(value);el('review-mark').disabled=!!(value.stagedTruncated||value.unstagedTruncated);el('review-mark').textContent=isReviewed(file)?'取消已审阅':'标记已审阅';renderGitFiles();}
+    catch(e){if(generation===hub.gitGeneration&&hub.reviewPath===file.path){el('git-diff-status').textContent=`差异读取失败：${message(e)}；未执行写操作。`;el('git-diff-staged').textContent='—';el('git-diff-unstaged').textContent='—';}}
   }
+  async function exportReview(){
+    if(!hub.gitSessionId||!hub.profile)return;const marks=reviewMarks(),rows=hub.gitFiles.map(file=>{const state=isReviewed(file)?'已审阅':marks[file.path]?(hub.reviewPath===file.path&&hub.reviewDiff?'差异已变化':'待重新核验'):'未审阅';const path=file.path.replace(/[\r\n]/g,' ').replaceAll('|','\\|');return `| ${file.status} | ${path} | ${state} |`;});
+    const content=`# 代码审阅摘要\n\n- 会话：${hub.detail?.session.title||hub.gitSessionId}\n- 工作区：${hub.gitCwd}\n- 分支：${hub.gitBranch}\n- 导出时间：${new Date().toLocaleString('zh-CN')}\n- 范围：只读 Git 清单；未跟踪文件内容未读取\n\n| 状态 | 文件 | 审阅状态 |\n| --- | --- | --- |\n${rows.length?rows.join('\n'):'| 干净 | 无变更 | — |'}\n`;
+    const button=el('review-export');button.disabled=true;try{const saved=await invoke('session_export',{content});toast(`审阅摘要已导出：${saved}`);}catch(e){toast(message(e),true);}finally{button.disabled=!hub.gitSessionId;}
+  }
+  function toggleReviewed(){const file=hub.gitFiles.find(item=>item.path===hub.reviewPath);if(!file||!hub.reviewDiff||hub.reviewDiff.stagedTruncated||hub.reviewDiff.unstagedTruncated)return;const marks=reviewMarks();if(isReviewed(file))delete marks[file.path];else marks[file.path]=hub.reviewDiff.fingerprint;if(persistReviewMarks(marks)){el('review-mark').textContent=isReviewed(file)?'取消已审阅':'标记已审阅';renderGitFiles();}}
   async function loadRules(){
     const sessionId=hub.gitSessionId,profile=hub.profile,generation=hub.gitGeneration;
     if(!sessionId||!profile||!hub.detail||hub.detail.session.sessionId!==sessionId)return;
@@ -230,6 +294,91 @@
       });el('results').append(button);
     }
     if(!visible.length)el('results').append(node('p','没有匹配会话。可缩小关键词，或检查工作区与状态筛选。','session-empty'));
+    renderObserver();
+  }
+  function renderObserver(){
+    const sessions=hub.sessions.filter(s=>!s.archived&&s.origin!=='subagent');
+    const observed=sessions.filter(s=>s.statusObserved===true);
+    const waiting=observed.filter(s=>['approval','question','plan-review'].includes(s.pending));
+    const running=sessions.filter(s=>s.running===true);
+    const completed=observed.filter(s=>s.completed===true&&!s.pending);
+    const unknown=sessions.filter(s=>s.statusObserved!==true);
+    el('observer-running').textContent=String(running.length);el('observer-waiting').textContent=String(waiting.length);el('observer-completed').textContent=String(completed.length);el('observer-unknown').textContent=String(unknown.length);
+    renderPendingCenter(waiting);
+    el('observer-updated').textContent=hub.observerUpdatedAt?`状态快照 · ${hub.observerUpdatedAt.toLocaleTimeString('zh-CN')}`:'等待读取会话状态';
+    const queue=el('observer-queue');queue.replaceChildren();
+    const priority=[...waiting,...running.filter(s=>!waiting.some(w=>w.sessionId===s.sessionId)),...completed.filter(s=>!waiting.some(w=>w.sessionId===s.sessionId)&&!running.some(r=>r.sessionId===s.sessionId))].slice(0,12);
+    if(!hub.loaded)queue.append(node('p','刷新会话列表后显示。','session-empty'));
+    else if(!priority.length)queue.append(node('p','当前没有已观测到的运行中或等待处理会话。','session-empty'));
+    for(const session of priority){const button=node('button','',`observer-row${hub.detail?.session.sessionId===session.sessionId?' selected':''}`);button.type='button';button.append(node('strong',sessionLabel(session.title)||'未命名会话'),node('span',observerLabel(session),'badge'));button.append(node('small',`${sessionLabel(session.workspace)||'未分组'} · ${session.sessionId}`));button.addEventListener('click',()=>select(session.sessionId));queue.append(button);}
+    const activity=el('observer-activity');activity.replaceChildren();
+    if(!hub.observerActivity.length)activity.append(node('p','开启关注后显示已观测到的状态变化。','session-empty'));
+    for(const item of hub.observerActivity.slice(0,8)){const row=node('div','', 'observer-activity-row');row.append(node('time',item.time),node('strong',item.title),node('span',item.kind));activity.append(row);}
+    renderObserverJobs();
+  }
+  function renderPendingCenter(waiting){
+    const target=el('pending-center-list');target.replaceChildren();
+    const rows=waiting.filter(session=>session.statusObserved===true&&['approval','question','plan-review'].includes(session.pending));
+    el('pending-center-status').textContent=`${rows.length} 个已观测待处理 · ${waiting.length-rows.length} 个等待状态未能细分`;
+    if(!rows.length){target.append(node('p','当前没有可确认的待处理事项。','session-empty'));return;}
+    const labels={approval:'等待审批',question:'等待回答','plan-review':'等待计划审阅'};
+    for(const session of rows){const button=node('button','', 'pending-center-row');button.type='button';button.append(node('strong',sessionLabel(session.title)||'未命名会话'),node('span',labels[session.pending]||'待处理','badge warning'),node('small',`${sessionLabel(session.workspace)||'未分组'} · ${session.sessionId}`));button.addEventListener('click',()=>select(session.sessionId));target.append(button);}
+  }
+  function renderObserverJobs(){
+    const target=el('observer-jobs'),refresh=el('observer-jobs-refresh'),candidates=hub.sessions.filter(s=>!s.archived&&s.origin!=='subagent'&&!s.blank);
+    refresh.disabled=hub.jobOverviewBusy||!candidates.length;
+    target.replaceChildren();
+    if(!hub.jobOverview){target.append(node('p',hub.jobOverviewBusy?'正在读取后台任务名册…':'点击刷新任务开始只读查询。','session-empty'));return;}
+    const value=hub.jobOverview;
+    if(!value.items.length&&!value.failures.length)target.append(node('p','当前没有可见的后台任务。','session-empty'));
+    for(const failure of value.failures)target.append(node('p',`${failure.title}：${failure.message}`,'observer-job-error'));
+    const labels={running:'运行中',stopping:'正在停止',completed:'已完成',killed:'已取消',failed:'失败'};
+    for(const item of value.items){
+      const row=document.createElement('article');row.className='observer-job-card';const button=node('button','', 'observer-job');button.type='button';
+      const age=jobDuration(item.job),longRunning=item.job.status==='running'&&age!==null&&age>=30*60*1000,failed=item.job.status==='failed';
+      button.append(node('strong',`${sessionLabel(item.session.title)||'未命名会话'} · ${item.job.kind||'后台任务'}`),node('span',labels[item.job.status]||'未知状态',`badge${failed?' warning':''}`));
+      const started=jobTime(item.job.startedAt);button.append(node('small',`${sessionLabel(item.session.workspace)||'未分组'} · ${item.job.id}${started?` · 开始 ${started.toLocaleString('zh-CN')}`:''}${item.job.progress?` · ${item.job.progress}`:''}`));
+      button.title='打开该会话详情';button.addEventListener('click',()=>select(item.session.sessionId));row.append(button);
+      if(longRunning||failed)row.append(node('span',failed?'任务报告失败':`运行超过 30 分钟 · ${durationLabel(age)}`,`observer-job-alert${failed?' error':''}`));
+      const review=node('button','查看会话与变更','button small');review.type='button';review.addEventListener('click',()=>{select(item.session.sessionId);setTimeout(()=>el('git-summary').scrollIntoView?.({behavior:'smooth',block:'center'}),250);});row.append(review);target.append(row);
+    }
+    const scan=value.candidateCount>20?`扫描前 20/${value.candidateCount} 个会话`:`扫描 ${value.scanned}/${value.candidateCount} 个会话`;
+    const counts={running:value.items.filter(item=>item.job.status==='running').length,stopping:value.items.filter(item=>item.job.status==='stopping').length,failed:value.items.filter(item=>item.job.status==='failed').length,completed:value.items.filter(item=>item.job.status==='completed').length};
+    el('observer-jobs-status').textContent=`${scan} · 共读取 ${value.totalCount} 项${value.totalCount>value.items.length?`，当前显示最新 ${value.items.length} 项`:''}（显示项：运行 ${counts.running}、已完成 ${counts.completed}、停止中 ${counts.stopping}、失败 ${counts.failed}）${value.failures.length?` · ${value.failures.length} 个会话读取失败`:''} · ${value.updatedAt.toLocaleTimeString('zh-CN')}`;
+  }
+  async function loadJobOverview(){
+    if(hub.jobOverviewBusy||!hub.profile)return;
+    const profile=hub.profile,generation=++hub.jobOverviewGeneration,candidates=hub.sessions.filter(s=>!s.archived&&s.origin!=='subagent'&&!s.blank),sessions=candidates.slice(0,20);
+    hub.jobOverviewBusy=true;el('observer-jobs-status').textContent=`正在读取 ${sessions.length} 个会话的任务名册…`;renderObserverJobs();
+    const items=[],failures=[];let cursor=0;
+    const worker=async()=>{while(cursor<sessions.length){const session=sessions[cursor++];try{const result=await query({action:'jobs',sessionId:session.sessionId},profile);for(const job of result.jobs||[])items.push({session,job});}catch(error){failures.push({title:sessionLabel(session.title)||session.sessionId,message:message(error).slice(0,160)});}}};
+    try{
+      await Promise.all(Array.from({length:Math.min(3,sessions.length)},worker));
+      if(generation!==hub.jobOverviewGeneration||profile!==hub.profile)return;
+      items.sort((a,b)=>(b.job.startedAt||0)-(a.job.startedAt||0));
+      hub.jobOverview={items:items.slice(0,80),totalCount:items.length,failures,candidateCount:candidates.length,scanned:sessions.length,updatedAt:new Date()};
+    }finally{
+      if(generation===hub.jobOverviewGeneration){hub.jobOverviewBusy=false;renderObserverJobs();}
+    }
+  }
+  function renderRunStats(){
+    const target=el('run-stats-results');target.replaceChildren();const result=hub.runStats;
+    if(!result){target.append(node('p',hub.runStatsBusy?'正在读取 Harness 持久统计…':'点击“刷新统计”读取最多 20 个会话。','session-empty'));return;}
+    const labels=[['uncachedInputTokens','未缓存输入 Token'],['outputTokens','输出 Token'],['cacheReadTokens','缓存读取 Token'],['cacheWriteTokens','缓存写入 Token']];
+    for(const [key,title] of labels){const row=document.createElement('div');row.className='session-usage-row';const value=result.sums[key],unavailable=result.unavailable[key];row.append(node('span',title),node('strong',value===null?'不可用':`${value.toLocaleString('zh-CN')}${unavailable?` · ${unavailable} 个会话缺失`:''}`));target.append(row);}
+    el('run-stats-status').textContent=`${result.scanned}/${result.candidateCount} 个会话 · ${result.available} 个有持久统计 · profile ${result.profile}${result.failures?` · ${result.failures} 个读取失败`:''} · ${result.updatedAt.toLocaleTimeString('zh-CN')}`;
+  }
+  async function loadRunStats(){
+    if(hub.runStatsBusy||!hub.profile)return;
+    const profile=hub.profile,generation=++hub.runStatsGeneration,candidates=hub.sessions.filter(s=>!s.archived&&s.origin!=='subagent'&&!s.blank),sessions=candidates.slice(0,20);
+    hub.runStatsBusy=true;el('run-stats-refresh').disabled=true;renderRunStats();let cursor=0,available=0,failures=0;const sums={uncachedInputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0},seen=Object.fromEntries(Object.keys(sums).map(key=>[key,0])),overflow=new Set();
+    const worker=async()=>{while(cursor<sessions.length){const session=sessions[cursor++];try{const detail=await query({action:'detail',sessionId:session.sessionId},profile);if(detail.projectionState!=='sequenced'||!detail.stats)continue;available++;for(const key of Object.keys(sums)){const value=detail.stats.tokenUsage?.[key];if(Number.isSafeInteger(value)&&value>=0){if(Number.isSafeInteger(sums[key]+value)){sums[key]+=value;seen[key]++;}else overflow.add(key);}}}catch{failures++;}}};
+    try{
+      await Promise.all(Array.from({length:Math.min(3,sessions.length)},worker));
+      if(generation!==hub.runStatsGeneration||profile!==hub.profile)return;
+      const unavailable=Object.fromEntries(Object.keys(sums).map(key=>[key,sessions.length-seen[key]]));
+      hub.runStats={sums:Object.fromEntries(Object.keys(sums).map(key=>[key,seen[key]&&!overflow.has(key)?sums[key]:null])),unavailable,scanned:sessions.length,candidateCount:candidates.length,available,failures,profile,updatedAt:new Date()};
+    }finally{if(generation===hub.runStatsGeneration){hub.runStatsBusy=false;el('run-stats-refresh').disabled=!hub.profile||!hub.loaded;renderRunStats();}}
   }
   function renderSwitcher(){
     if(!hub.switcherOpen)return;
@@ -256,8 +405,9 @@
   function setBatchMode(active){if(hub.batchBusy)return;if(active)clearCompare(false);clearBatch(active);render();}
   function accept(snapshot) {
     status(true,'已通过会话中心读取当前 Harness 实例。');
-      if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();hub.favorites.clear();hub.tags.clear();hub.notes.clear();hub.notesGeneration++;clearBatch(false);renderWatched();clearDetail();clearCompare();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
-    hub.profile=snapshot.profile;hub.sessions=snapshot.sessions.filter(s=>s.origin!=='subagent');hub.loaded=true;loadFavorites(snapshot.profile);loadSessionTags(snapshot.profile);loadSessionNotes(snapshot.profile);renderSwitcher();
+      if(hub.profile&&hub.profile!==snapshot.profile){hub.watched.clear();hub.favorites.clear();hub.tags.clear();hub.notes.clear();hub.notesGeneration++;hub.observerActivity=[];hub.jobOverview=null;hub.jobOverviewGeneration++;hub.jobOverviewBusy=false;hub.runStats=null;hub.runStatsGeneration++;hub.runStatsBusy=false;clearBatch(false);renderWatched();clearDetail();clearCompare();hub.hits.clear();hub.searchQuery=null;hub.hasMore=false;}
+    hub.profile=snapshot.profile;hub.sessions=snapshot.sessions.filter(s=>s.origin!=='subagent');hub.loaded=true;el('run-stats-refresh').disabled=false;loadFavorites(snapshot.profile);loadSessionTags(snapshot.profile);loadSessionNotes(snapshot.profile);renderSwitcher();
+      hub.observerUpdatedAt=new Date();
       renderCheckpoints();
     const selected=el('workspace').value;
     el('workspace').replaceChildren(new Option('全部工作区',''));
@@ -372,6 +522,7 @@
       if(generation!==hub.generation)return;
       hub.hits=new Map((snapshot.hits||[]).map(h=>[h.sessionId,h.snippet]));hub.searchQuery=search?term.toLocaleLowerCase():null;hub.hasMore=snapshot.hasMore===true;
       hub.searchInfo=snapshot.searchMode==='recent'?` · 索引关闭，已只读扫描 ${snapshot.scanned} 个会话最近 20 条消息${snapshot.failed?`，${snapshot.failed} 个读取失败`:''}`:snapshot.searchMode==='native'?' · 原生正文索引搜索':'';
+      el('search-status').textContent=search?`${snapshot.hits?.length||0} 个正文命中 · ${snapshot.searchMode==='native'?'Harness 原生索引':`最近消息扫描 ${snapshot.scanned||0} 个会话`}${snapshot.hasMore?' · 结果不完整':''}`:'支持标题、工作区、路径、标签与消息正文';
       hub.page=0;accept(snapshot);
     }catch(e){if(generation===hub.generation){hub.loaded=false;error(message(e));}}
     finally {hub.loading=false;el('refresh').disabled=false;el('search-button').disabled=false;}
@@ -407,6 +558,9 @@
       const detail=await query({action:'detail',sessionId:id},profile);
       if(generation!==hub.detailGeneration||profile!==hub.profile)return;
       hub.detail=detail;
+      el('capability-scan').disabled=false;
+      try{el('review-notes').value=localStorage.getItem(reviewNoteKey(profile,id))||'';el('review-notes-status').textContent='备注按当前 profile 和会话 ID 保存在本机。';}catch{el('review-notes').value='';el('review-notes-status').textContent='本机备注读取失败。';}
+      el('review-notes-save').disabled=false;
       renderTemplates();
       hub.noteDirty=false;el('note').value=hub.notes.get(id)||'';el('note-save').disabled=false;
       renderUsage(detail);
@@ -414,12 +568,7 @@
       loadJobs(id,profile,generation);
       el('detail-title').textContent=sessionLabel(detail.session.title)||'未命名会话';
       el('detail-meta').textContent=`${sessionLabel(detail.session.workspace)||'未分组'} · ${label(detail.session)} · ID ${id}${Number.isSafeInteger(detail.throughSeq)?` · 截至事件 ${detail.throughSeq}`:''}${detail.hasMore?'（仅最近一页）':'（历史起点已覆盖）'}`;
-      for(const m of detail.messages) {
-        const part=node('article','','session-message');part.append(node('small',`${m.role==='user'?'用户':'助手'} · #${m.seq}`),node('p',m.text));el('excerpts').append(part);
-      }
-      if(detail.projectionState!=='sequenced')el('excerpts').append(node('p',detail.projectionState==='migration-required'?'此会话需要 Harness 数据迁移，当前无法取得经过序号确认的历史页面。':'Harness 未提供可验证的历史游标，暂不读取会话摘录。'));
-      else if(!detail.messages.length)el('excerpts').append(node('p','该页没有可显示的文本消息；图片、工具输出和推理内容不在摘录范围内。'));
-      if(detail.lastTurn)el('excerpts').append(node('small',`最近轮次结束原因（原生值）：${detail.lastTurn.reason}`,'subtle'));
+      renderTimeline(detail);
       el('prompt').readOnly=false;compose();el('copy').disabled=false;el('export').disabled=false;el('checkpoint-save').disabled=detail.session.archived;
       el('open').disabled=detail.session.archived;el('watch-add').disabled=detail.session.archived||hub.watchBusy;
       el('favorite-toggle').disabled=false;el('favorite-toggle').textContent=hub.favorites.has(id)?'取消收藏':'收藏会话';
@@ -471,8 +620,8 @@
   el('compare-mode').addEventListener('click',()=>{if(hub.batchBusy)return;if(!hub.compareMode)clearBatch(false);clearCompare(!hub.compareMode);render();});
   el('compare-run').addEventListener('click',compareSelected);
   el('search-form').addEventListener('submit',e=>{e.preventDefault();return refresh(true);});
-  el('search').addEventListener('input',()=>{hub.page=0;hub.hasMore=false;hub.searchInfo='';render();});
-  el('clear').addEventListener('click',()=>{el('search').value='';hub.searchQuery=null;hub.hits.clear();hub.hasMore=false;hub.searchInfo='';hub.page=0;render();});
+  el('search').addEventListener('input',()=>{hub.page=0;hub.hasMore=false;hub.searchInfo='';el('search-status').textContent='支持标题、工作区、路径、标签与消息正文';render();});
+  el('clear').addEventListener('click',()=>{el('search').value='';hub.searchQuery=null;hub.hits.clear();hub.hasMore=false;hub.searchInfo='';el('search-status').textContent='支持标题、工作区、路径、标签与消息正文';hub.page=0;render();});
   for(const id of ['workspace','filter'])el(id).addEventListener('change',()=>{hub.page=0;render();});
   el('prev').addEventListener('click',()=>{hub.page=Math.max(0,hub.page-1);render();});el('next').addEventListener('click',()=>{hub.page++;render();});
   el('next-task').addEventListener('input',compose);
@@ -494,7 +643,14 @@
     catch(e){toast(message(e),true);}finally{el('checkpoint-save').disabled=!hub.detail;}
   });
   el('git-refresh').addEventListener('click',()=>loadGit());
-  el('git-diff').addEventListener('click',loadGitDiff);
+  el('review-search').addEventListener('input',renderGitFiles);
+  el('review-mark').addEventListener('click',toggleReviewed);
+  el('review-export').addEventListener('click',exportReview);
+  el('review-notes').addEventListener('input',()=>{el('review-notes-save').disabled=!hub.detail;});
+  el('review-notes-save').addEventListener('click',()=>{if(!hub.detail||!hub.profile)return;try{localStorage.setItem(reviewNoteKey(hub.profile,hub.detail.session.sessionId),el('review-notes').value);el('review-notes-status').textContent='审阅备注已保存在本机；不会修改项目文件。';el('review-notes-save').disabled=true;}catch{el('review-notes-status').textContent='保存失败：本机存储不可用。';}});
+  el('capability-scan').addEventListener('click',async()=>{const detail=hub.detail,profile=hub.profile,generation=hub.detailGeneration;if(!detail||!profile)return;const button=el('capability-scan'),target=el('capability-results');button.disabled=true;target.replaceChildren(node('p','正在读取已验证的技能目录…','session-empty'));try{const result=await query({action:'skills',sessionId:detail.session.sessionId},profile);if(generation!==hub.detailGeneration||profile!==hub.profile)return;target.replaceChildren();if(!result.skills.length)target.append(node('p','当前会话没有可调用技能。','session-empty'));for(const skill of result.skills){const row=document.createElement('div');row.append(node('strong',skill.name),node('small',skill.modelInvocable?'模型可调用':'仅用户可调用'));if(skill.description)row.append(node('small',skill.description));target.append(row);}target.append(node('p','插件、Hooks 与 MCP 管理/安装接口未验证，保持未接入。','subtle'));}catch(e){if(generation===hub.detailGeneration)target.replaceChildren(node('p',`技能目录读取失败：${message(e)}`,'session-empty'));}finally{if(generation===hub.detailGeneration)button.disabled=false;}});
+  el('observer-jobs-refresh').addEventListener('click',loadJobOverview);
+  el('run-stats-refresh').addEventListener('click',loadRunStats);
   el('rules-read').addEventListener('click',loadRules);
   el('watch-add').addEventListener('click',()=>{if(!hub.detail)return;const ids=new Set(hub.watched),id=hub.detail.session.sessionId;ids.has(id)?ids.delete(id):ids.add(id);return watch(ids);});
   el('watch-stop').addEventListener('click',()=>watch(new Set()));
@@ -511,6 +667,7 @@
     await window.__TAURI__.event.listen('session-notification-unavailable',e=>{el('notification-feedback').textContent=e.payload;});
     await window.__TAURI__.event.listen('session-notice',e=>{
       const n=e.payload;if(n.profile!==hub.profile)return;
+      hub.observerActivity.unshift({time:new Date().toLocaleTimeString('zh-CN'),title:sessionLabel(n.title)||'未命名会话',kind:n.kind});hub.observerActivity=hub.observerActivity.slice(0,30);renderObserver();
       const button=node('button',`${new Date().toLocaleTimeString('zh-CN')} · ${sessionLabel(n.title)||'未命名会话'} · ${n.kind} →`,'session-notice');
       button.addEventListener('click',()=>openSession(n.sessionId,n.profile));el('notices').prepend(button);
       while(el('notices').children.length>50)el('notices').lastElementChild.remove();toast(n.kind);renderWatched();

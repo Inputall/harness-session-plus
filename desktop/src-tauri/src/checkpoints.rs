@@ -85,10 +85,14 @@ pub fn validate(entries: &[Checkpoint]) -> Result<(), String> {
             || item.workspace.len() > 2000
             || item.cwd.len() > 4096
             || !text(&item.prompt, MAX_TEXT)
-            || item
-                .git
-                .as_ref()
-                .is_some_and(|git| git.branch.len() > 2000 || git.changed_files > 1_000_000)
+            || item.git.as_ref().is_some_and(|git| {
+                git.branch.len() > 2000
+                    || git.changed_files > 1_000_000
+                    || git.files.len() > 10_000
+                    || git.files.iter().any(|file| {
+                        file.status.len() > 100 || file.path.is_empty() || file.path.len() > 4096
+                    })
+            })
     }) {
         return Err("检查点字段无效或超过限制".into());
     }

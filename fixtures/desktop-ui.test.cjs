@@ -181,6 +181,84 @@ test('Ctrl+K opens a searchable session switcher and selects by real session ID'
  assert.equal(env.elements['session-switcher-dialog'].open,false);assert.equal(env.elements['session-detail-title'].textContent,'Beta task');
  const detail=env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='detail');assert.equal(detail.args.request.sessionId,'real-b');assert.equal(detail.args.expectedProfile,'p');
 });
+test('task observer summarizes verified session states and records only captured watcher activity',async()=>{
+ const sessions=[
+  {sessionId:'run-a',title:'Running task',workspace:'Project A',running:true,archived:false,statusObserved:true},
+  {sessionId:'wait-b',title:'Needs approval',workspace:'Project B',running:true,archived:false,statusObserved:true,pending:'approval'},
+  {sessionId:'done-c',title:'Finished task',workspace:'Project C',running:false,archived:false,statusObserved:true,completed:true},
+  {sessionId:'unknown-d',title:'Unobserved task',workspace:'Project D',running:false,archived:false,statusObserved:false},
+  {sessionId:'archived-e',title:'Archived',workspace:'Old',running:false,archived:true,statusObserved:true}
+ ];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail'){const session=sessions.find(item=>item.sessionId===args.request.sessionId);return {session,messages:[],throughSeq:1,projectionState:'sequenced',profile:'p'};}
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs')return {jobs:[]};
+  if(['favorite_list','session_tags_list','session_notes_list','checkpoint_list','prompt_template_list'].includes(command))return [];
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ assert.equal(env.elements['session-observer-running'].textContent,'2');assert.equal(env.elements['session-observer-waiting'].textContent,'1');assert.equal(env.elements['session-observer-completed'].textContent,'1');assert.equal(env.elements['session-observer-unknown'].textContent,'1');
+ assert.equal(env.elements['session-observer-queue'].children.length,3);assert.equal(env.elements['session-observer-queue'].children[0].children[1].textContent,'等待审批');
+ assert.equal(env.elements['session-pending-center-list'].children.length,1);assert.match(env.elements['session-pending-center-status'].textContent,/1 个已观测待处理/);
+ await env.elements['session-observer-queue'].children[0].events.click();await env.settle();assert.equal(env.elements['session-detail-title'].textContent,'Needs approval');
+ env.listeners['session-notice']({payload:{profile:'p',sessionId:'wait-b',title:'Needs approval',kind:'等待审批'}});assert.equal(env.elements['session-observer-activity'].children.length,1);assert.equal(env.elements['session-observer-activity'].children[0].children[2].textContent,'等待审批');
+ env.listeners['session-notice']({payload:{profile:'other',sessionId:'x',title:'Other',kind:'等待回答'}});assert.equal(env.elements['session-observer-activity'].children.length,1);
+ assert(env.calls.every(call=>!['session_send','job_cancel','job_kill','session_inject','session_steer'].includes(call.command)));
+});
+test('cross-session job overview scans bounded non-archived sessions, limits concurrency, and hides commands',async()=>{
+ const sessions=Array.from({length:22},(_,i)=>({sessionId:`run-${i}`,title:`Running ${i}`,workspace:'Project',running:true,archived:false}));sessions.push({sessionId:'idle',title:'Idle',workspace:'Project',running:false,archived:false});
+ let active=0,maxActive=0;const env=environment(async(command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'p'};
+  if(command==='session_query'&&args.request.action==='jobs'){
+   active++;maxActive=Math.max(maxActive,active);await new Promise(resolve=>setTimeout(resolve,1));active--;
+   return {jobs:[{id:`job-${args.request.sessionId}`,kind:'shell',command:'sensitive command',status:'running',progress:'checks in progress',startedAt:100}]};
+  }
+  if(command==='session_query'&&args.request.action==='detail')return {session:sessions.find(s=>s.sessionId===args.request.sessionId),messages:[],throughSeq:0,projectionState:'sequenced'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs')return {jobs:[]};
+  if(['favorite_list','session_tags_list','session_notes_list','checkpoint_list','prompt_template_list'].includes(command))return [];
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ await env.fire('session-observer-jobs-refresh');
+ assert.equal(env.calls.filter(c=>c.command==='session_query'&&c.args.request.action==='jobs').length,20);assert(maxActive<=3);assert.match(env.elements['session-observer-jobs-status'].textContent,/前 20\/23 个会话/);
+ assert.equal(env.elements['session-observer-jobs'].children.length,20);assert.doesNotMatch(env.elements['session-observer-jobs'].children[0].textContent,/sensitive command/);assert.match(env.elements['session-observer-jobs'].children[0].children[0].children[2].textContent,/checks in progress/);
+ await env.elements['session-observer-jobs'].children[0].children[0].events.click();assert.match(env.elements['session-detail-title'].textContent,/Running/);
+ assert(env.calls.every(call=>!['job_cancel','job_kill','session_send','session_inject','session_steer'].includes(call.command)));
+});
+test('job details show verified timestamps and long-running warning without reading task output',async()=>{
+ const session={sessionId:'job-session',title:'Long task',workspace:'Project',running:true,archived:false};let jobReads=0;
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[session],profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session,messages:[],throughSeq:1,projectionState:'sequenced'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs'){jobReads++;return {jobs:[{id:'job-1',kind:'shell',command:'hidden from overview',status:'running',progress:'step 2/4',startedAt:Date.now()-3600000,finishedAt:null,retainedBytes:12}]};}
+  if(['favorite_list','session_tags_list','session_notes_list','checkpoint_list','prompt_template_list'].includes(command))return [];
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();await env.elements['session-results'].children[0].events.click();await env.settle();
+ const jobs=env.elements['session-jobs'],text=n=>[n.textContent,...n.children.map(text)].join(' ');assert.equal(jobReads,1);assert.match(text(jobs.children[0]),/运行超过 30 分钟/);assert.match(text(jobs.children[0]),/开始/);assert.match(text(jobs.children[0]),/已运行 1 小时/);assert.match(text(jobs.children[0]),/step 2\/4/);
+ assert(env.calls.every(call=>!['job_output','job_cancel','job_kill'].includes(call.command)));
+});
+test('run statistics sum only available persisted counters and disclose bounded sample gaps',async()=>{
+ const sessions=Array.from({length:22},(_,i)=>({sessionId:`stats-${i}`,title:`Stats ${i}`,workspace:'Project',running:false,archived:false}));let active=0,maxActive=0;
+ const env=environment(async(command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'stats-profile'};
+  if(command==='session_query'&&args.request.action==='detail'){
+   active++;maxActive=Math.max(maxActive,active);await new Promise(resolve=>setTimeout(resolve,1));active--;
+   const i=Number(args.request.sessionId.slice(6));return {session:sessions[i],projectionState:i===1?'unavailable':'sequenced',stats:{tokenUsage:i===1?{}:{uncachedInputTokens:10,outputTokens:4,cacheReadTokens:2,cacheWriteTokens:1}}};
+  }
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs')return {jobs:[]};
+  if(['favorite_list','session_tags_list','session_notes_list','checkpoint_list','prompt_template_list'].includes(command))return [];
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ await env.fire('session-run-stats-refresh');await env.settle();
+ assert.equal(env.calls.filter(c=>c.command==='session_query'&&c.args.request.action==='detail').length,20);assert(maxActive<=3);
+ const text=n=>[n.textContent,...n.children.map(text)].join(' ');assert.match(text(env.elements['session-run-stats-results']),/190 · 1 个会话缺失/);assert.match(env.elements['session-run-stats-status'].textContent,/20\/22 个会话/);assert.match(env.elements['session-run-stats-status'].textContent,/stats-profile/);
+});
 test('prompt templates save locally, filter, insert without sending, and delete by template ID',async()=>{
  const session={sessionId:'session-1',title:'Current task',workspace:'Project',running:false,archived:false};
  const templates=[];
@@ -376,7 +454,7 @@ test('session center searches body, copies bounded context, exports and navigate
   if(command==='session_query'){
    if(args.request.action==='list')return {sessions:[s],profile:'profile-a'};
    if(args.request.action==='search')return {sessions:[s],profile:'profile-a',hits:[{sessionId:'a',snippet:'needle in body'}],searchMode:'recent',scanned:1,hasMore:true};
-   if(args.request.action==='detail')return {session:s,messages:[{seq:1,role:'user',text:'needle in body'}],throughSeq:1,hasMore:true,profile:'profile-a',projectionState:'sequenced',stats:{permissionPreset:'workspace-write',planMode:{active:true,pending:false},tokenUsage:{uncachedInputTokens:125,outputTokens:30},contextPressure:{pressureTokens:160},modelSelection:{lastUsed:{provider:'provider-x',model:'model-y'},next:null}}};
+   if(args.request.action==='detail')return {session:s,messages:[{seq:1,role:'user',text:'needle in body'},{seq:3,role:'assistant',text:'verified response'}],lastTurn:{seq:4,reason:'aborted'},throughSeq:4,hasMore:true,profile:'profile-a',projectionState:'sequenced',stats:{permissionPreset:'workspace-write',planMode:{active:true,pending:false},tokenUsage:{uncachedInputTokens:125,outputTokens:30},contextPressure:{pressureTokens:160},modelSelection:{lastUsed:{provider:'provider-x',model:'model-y'},next:null}}};
    if(args.request.action==='skills')return {skills:[{name:'review',description:'Read-only review',whenToUse:'Before changes',modelInvocable:true}]};
    if(args.request.action==='jobs')return {jobs:[{id:'job-1',kind:'shell',command:'npm test',status:'running',progress:'running tests',detail:'',retainedBytes:42}]};
    if(args.request.action==='open')return {opened:true};
@@ -389,10 +467,12 @@ test('session center searches body, copies bounded context, exports and navigate
  env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
  assert.equal(env.elements['session-results'].children[0].children[0].textContent,'编程助手 <img onerror=x>');
  env.elements['session-search'].value='needle';await env.fire('session-search-form','submit');
+ assert.match(env.elements['session-search-status'].textContent,/1 个正文命中/);
  assert.match(env.elements['session-count'].textContent,/索引关闭/);
  await env.elements['session-results'].children[0].events.click();await env.settle();
  await env.settle();
  assert.equal(env.elements['session-detail-title'].textContent,'编程助手 <img onerror=x>');
+ assert.match(env.elements['session-timeline-status'].textContent,/3 条可验证记录.*最近一页/);assert.equal(env.elements['session-excerpts'].children.length,3);assert.equal(env.elements['session-excerpts'].children[0].children[0].children[0].textContent,'#1 · 用户');assert.equal(env.elements['session-excerpts'].children[2].children[0].children[0].textContent,'#4 · 轮次结束');assert.equal(env.elements['session-excerpts'].children[2].children[1].textContent,'结束原因（原生值）：aborted');
  const usageText=n=>[n.textContent,...n.children.map(usageText)].join(' ');assert.match(usageText(env.elements['session-usage']),/workspace-write/);assert.match(usageText(env.elements['session-usage']),/计划模式/);assert.match(usageText(env.elements['session-usage']),/125/);assert.match(usageText(env.elements['session-usage']),/Read-only review/);
  assert.match(usageText(env.elements['session-jobs']),/npm test/);assert.match(usageText(env.elements['session-jobs']),/运行中/);assert.equal(env.elements['session-jobs-refresh'].disabled,false);
  assert.equal(env.elements['session-plan-command'].disabled,false);await env.fire('session-plan-command');assert.equal(copied,'/plan off');
@@ -411,7 +491,7 @@ test('session center searches body, copies bounded context, exports and navigate
 });
 test('session checkpoints persist locally, require the saved profile, and restore through the exact session ID',async()=>{
  const session={sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',running:false,archived:false};
- const saved={id:'cp-1-0',profile:'profile-a',sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',createdAt:1,prompt:'continue this verified task',git:{branch:'main',clean:false,changedFiles:2}};
+ const saved={id:'cp-1-0',profile:'profile-a',sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',createdAt:1,prompt:'continue this verified task',git:{branch:'main',clean:false,changedFiles:2,files:[{status:'工作区修改',path:'src/old.rs'}]}};
  let checkpoints=[];
  const env=environment((command,args)=>{
   if(command==='session_query'&&args.request.action==='list')return {sessions:[session],profile:'profile-a'};
@@ -430,6 +510,7 @@ test('session checkpoints persist locally, require the saved profile, and restor
  assert.equal(env.calls.find(c=>c.command==='checkpoint_create').args.input.profile,'profile-a');
  assert.equal(env.elements['session-checkpoints'].children.length,1);
  const actions=env.elements['session-checkpoints'].children[0].children[1].children;
+ await actions[2].events.click();assert.match(env.elements['session-checkpoint-compare-status'].textContent,/不读取文件正文/);const collectText=element=>[element.textContent,...element.children.flatMap(collectText)].join(' ');const compareText=collectText(env.elements['session-checkpoint-compare-result']);assert.match(compareText,/feature\/newer/);assert.match(compareText,/src\/old\.rs/);
  assert.equal(actions[0].disabled,false);await actions[0].events.click();
  assert.match(env.confirmations[0],/Git 状态与当前工作区不同/);
  assert.equal(env.elements['session-prompt'].value,'continue this verified task');
@@ -447,26 +528,32 @@ test('Git workspace panel is read-only and ignores stale results after switching
   if(command==='session_query'&&args.request.action==='list')return {sessions:[first,second],profile:'p'};
   if(command==='session_query'&&args.request.action==='detail')return {session:args.request.sessionId==='a'?first:second,messages:[],throughSeq:1,profile:'p'};
   if(command==='session_query'&&args.request.action==='skills')return {skills:[{name:'review',description:'Review changes',whenToUse:'Before merge',modelInvocable:true}]};
-  if(command==='workspace_git_status'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {cwd:'D:/repo-a',branch:'main',clean:false,files:[{status:'工作区修改',path:'src/main.rs'}],commits:['abc123\t2026-10-19\tread-only']};}
-  if(command==='workspace_git_diff'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {staged:'diff --cached staged marker',stagedTruncated:false,unstaged:'diff -- unstaged marker',unstagedTruncated:false};}
+  if(command==='workspace_git_status'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {cwd:'D:/repo-a',branch:'main',clean:false,files:[{status:'已暂存修改',path:'src/staged.rs'},{status:'工作区修改',path:'src/main.rs'},{status:'未跟踪',path:'draft.txt'}],commits:['abc123\t2026-10-19\tread-only']};}
+  if(command==='workspace_git_file_diff'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');assert.equal(args.path,'src/main.rs');return {path:args.path,fingerprint:'stable-fingerprint',staged:'diff --cached staged marker',stagedTruncated:false,unstaged:'diff -- unstaged marker',unstagedTruncated:false};}
   if(command==='workspace_rules'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {files:[{path:'AGENTS.md',bytes:23,truncated:false,content:'Rule text <script> inert'}]};}
   throw Error(command);
  });
  vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
  await env.elements['session-results'].children[0].events.click();await env.settle();await env.settle();
- assert.match(env.elements['session-git-summary'].textContent,/D:\/repo-a/);assert.match(env.elements['session-git-files'].children[0].children[1].textContent,/src\/main\.rs/);
+ assert.match(env.elements['session-git-summary'].textContent,/D:\/repo-a/);assert.match(env.elements['session-git-files'].children[1].children[1].children[1].textContent,/src\/main\.rs/);
  assert(env.elements['session-usage'].children.some(child=>child.textContent.includes('工具与技能清单（已验证）')));
  assert(env.elements['session-usage'].children.some(child=>child.textContent.includes('MCP 服务清单接口尚未验证')));
+ env.elements['session-review-notes'].value='Review finding';await env.fire('session-review-notes','input');await env.fire('session-review-notes-save');assert.equal(env.storage.get('hsp-review-note:p:a'),'Review finding');
+ await env.fire('session-capability-scan');await env.settle();assert.match(env.elements['session-capability-results'].children[0].children[0].textContent,/review/);assert.match(env.elements['session-capability-results'].children.at(-1).textContent,/未验证/);
  assert.equal(env.calls.filter(c=>c.command==='workspace_git_status').length,1);
- await env.elements['session-git-diff'].events.click();await env.settle();
+ await env.elements['session-git-files'].children[1].children[1].events.click();await env.settle();
  assert.match(env.elements['session-git-diff-staged'].textContent,/staged marker/);
  assert.match(env.elements['session-git-diff-unstaged'].textContent,/unstaged marker/);
- assert.equal(env.calls.filter(c=>c.command==='workspace_git_diff').length,1);
+ assert.equal(env.calls.filter(c=>c.command==='workspace_git_file_diff').length,1);
+ await env.fire('session-review-mark');assert.equal(env.elements['session-review-mark'].textContent,'取消已审阅');assert.match(env.elements['session-review-progress'].textContent,/1 项已核验.*共 3 项/);
+ await env.fire('session-review-export');assert.equal(env.calls.filter(c=>c.command==='session_export').length,1);assert.match(env.calls.find(c=>c.command==='session_export').args.content,/src\/main\.rs/);
+ env.elements['session-review-search'].value='draft';await env.fire('session-review-search','input');assert.equal(env.elements['session-git-files'].children.length,1);assert.match(env.elements['session-git-files'].children[0].children[0].textContent,/未跟踪/);
+ await env.elements['session-git-files'].children[0].children[1].events.click();assert.match(env.elements['session-git-diff-status'].textContent,/仅显示路径/);assert.equal(env.calls.filter(c=>c.command==='workspace_git_file_diff').length,1);
  await env.elements['session-rules-read'].events.click();await env.settle();
  assert.equal(env.elements['session-rules-files'].children.length,1);
  assert.equal(env.elements['session-rules-files'].children[0].children[1].textContent,'Rule text <script> inert');
  assert.equal(env.calls.filter(c=>c.command==='workspace_rules').length,1);
- assert(env.calls.every(c=>!['git_commit','git_reset','git_checkout','git_add'].includes(c.command)));
+ assert(env.calls.every(c=>!['git_commit','git_reset','git_checkout','git_add','git_stage','git_restore','git_clean','permanently_delete_session'].includes(c.command)));
  await env.elements['session-git-refresh'].events.click();assert.equal(env.calls.filter(c=>c.command==='workspace_git_status').length,2);
 });
 test('late detail and changed search terms cannot expose stale selection or stale hits',async()=>{
