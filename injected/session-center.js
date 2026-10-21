@@ -40,12 +40,18 @@
   });
   const history = async sessionId => {
     const projections = await rpc('session/projections', {request: {sessionId}});
-    if (!Number.isSafeInteger(projections?.asOfSeq) || projections.asOfSeq < -1) throw Error('Session cursor unavailable');
+    if (projections?.kind !== 'sequenced' || !Number.isSafeInteger(projections?.asOfSeq) || projections.asOfSeq < -1) {
+      return {projectionState: projections?.kind === 'migration-required' ? 'migration-required' : 'unavailable', values: null, page: {records: [], hasMore: true}};
+    }
+    const page = await readPage(sessionId, projections.asOfSeq);
+    return {page, throughSeq: projections.asOfSeq, values: projections.values || {}, projectionState: 'sequenced'};
+  };
+  const readPage = async (sessionId, throughSeq) => {
     const page = await rpc('session/page', {request: {
-      address: {kind: 'session', sessionId}, throughSeq: projections.asOfSeq, maxMessages: 20
+      address: {kind: 'session', sessionId}, ...(Number.isSafeInteger(throughSeq) ? {throughSeq} : {}), maxMessages: 20
     }});
     if (!Array.isArray(page.records)) throw Error('Unsupported history page');
-    return {page, throughSeq: projections.asOfSeq};
+    return page;
   };
   const texts = page => page.records.filter(r => r.type === 'event' &&
     ['user/message','assistant/message'].includes(r.event?.type) && r.event.surfaceOp === 'append').map(r => {
@@ -89,10 +95,51 @@
     browser.open(session.sessionId);
     return {opened: true};
   }
+  if (request.action === 'skills') {
+    const result = await rpc('skills/list', {request: {sessionId: session.sessionId}});
+    if (!Array.isArray(result?.skills)) throw Error('Unsupported skill catalog');
+    return {skills: result.skills.slice(0, 100).map(skill => ({
+      name: typeof skill.name === 'string' ? skill.name.slice(0, 200) : '',
+      description: typeof skill.description === 'string' ? skill.description.slice(0, 1000) : '',
+      whenToUse: typeof skill.whenToUse === 'string' ? skill.whenToUse.slice(0, 1000) : '',
+      modelInvocable: skill.modelInvocable === true
+    })).filter(skill => skill.name)};
+  }
+  if (request.action === 'jobs') {
+    if (typeof adapter.streamFirst !== 'function') throw Error('Background-job stream unavailable');
+    const jobs = await adapter.streamFirst('job/list', {request: {sessionId: session.sessionId}}, origin);
+    const allowed = new Set(['running','stopping','completed','killed','failed']);
+    return {jobs: jobs.slice(0, 100).filter(job => job && typeof job.id === 'string' && allowed.has(job.status)).map(job => ({
+      id: job.id.slice(0, 256),
+      kind: typeof job.kind === 'string' ? job.kind.slice(0, 120) : '',
+      command: typeof job.command === 'string' ? job.command.slice(0, 2000) : '',
+      status: job.status,
+      progress: typeof job.progress === 'string' ? job.progress.slice(0, 1000) : '',
+      detail: typeof job.detail === 'string' ? job.detail.slice(0, 1000) : '',
+      startedAt: Number.isSafeInteger(job.startedAt) ? job.startedAt : null,
+      finishedAt: Number.isSafeInteger(job.finishedAt) ? job.finishedAt : null,
+      retainedBytes: Number.isSafeInteger(job.output?.total) && job.output.total >= 0 ? job.output.total : null
+    }))};
+  }
   if (request.action !== 'detail') throw Error('Unsupported read action');
-  const {page,throughSeq}=await history(session.sessionId);
+  const {page,throughSeq,values,projectionState}=await history(session.sessionId);
   const messages=texts(page).map(m=>({...m,text:m.text.slice(0,6000)}));
   const end = page.records.filter(r => r.type === 'event' && r.event?.type === 'turn/end').at(-1)?.event;
-  return {session, messages, hasMore: page.hasMore, throughSeq,
+  const pick = (value, keys) => value && typeof value === 'object' ? Object.fromEntries(keys.filter(k => Number.isSafeInteger(value[k]) && value[k] >= 0).map(k => [k, value[k]])) : {};
+  const selection = values?.modelSelection;
+  const permissionPreset = typeof values?.permissions?.currentValue === 'string' && values.permissions.currentValue.length <= 100
+    ? values.permissions.currentValue : null;
+  const plan = values?.plan && typeof values.plan.active === 'boolean' && typeof values.plan.pending === 'boolean'
+    ? {active: values.plan.active, pending: values.plan.pending} : null;
+  const route = value => value && typeof value.provider === 'string' && value.provider && typeof value.model === 'string' && value.model
+    ? {provider: value.provider, model: value.model, ...(typeof value.reasoningEffort === 'string' ? {reasoningEffort: value.reasoningEffort} : {})} : null;
+  const stats = projectionState === 'sequenced' ? {
+    tokenUsage: pick(values?.tokenUsage, ['uncachedInputTokens','outputTokens','cacheReadTokens','cacheWriteTokens']),
+    contextPressure: pick(values?.contextPressure, ['pressureTokens','projectedTokens','contextWindow']),
+    modelSelection: {lastUsed: route(selection?.lastUsed), next: route(selection?.next)},
+    permissionPreset,
+    planMode: plan
+  } : null;
+  return {session, messages, hasMore: page.hasMore, throughSeq, projectionState, stats,
     lastTurn: end ? {seq: end.seq, reason: end.data?.reason?.kind || 'unknown'} : null};
 })

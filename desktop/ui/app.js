@@ -235,6 +235,11 @@ function setSettings(settings){state.settings=settings;$("port").value=settings.
 function stopMonitor(){clearInterval(state.autoTimer);state.autoTimer=null;$("auto-check").checked=false;}
 for(const button of document.querySelectorAll("[data-page]"))button.addEventListener("click",()=>navigate(button.dataset.page));
 for(const button of document.querySelectorAll("[data-nav]"))button.addEventListener("click",()=>navigate(button.dataset.nav));
+window.addEventListener('keydown',event=>{
+  if(!event.ctrlKey||event.altKey||event.metaKey||event.key.toLowerCase()!=='k')return;
+  if(event.target?.matches?.('input,textarea,select,[contenteditable="true"]'))return;
+  event.preventDefault();navigate('sessions');window.openSessionSwitcher?.();
+});
 for(const button of document.querySelectorAll("[data-action]"))button.addEventListener("click",async()=>{if(button.dataset.action==='remove_injection')state.recyclePreference=false;await run(button.dataset.action);});
 $("auto-check").addEventListener("change",()=>{const requested=$("auto-check").checked;stopMonitor();if(!requested)return;if(!state.connected){toast("请先成功检查一次连接。",true);return;}$("auto-check").checked=true;state.failures=0;state.autoTimer=setInterval(()=>run("diagnose",true),15000);});
 $("disconnect").addEventListener("click",()=>{stopMonitor();toast("自动状态检查已停止；现有页面增强不受影响。");});

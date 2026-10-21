@@ -66,6 +66,10 @@ fn foreground(pid: u32) {
 #[cfg(not(windows))]
 fn foreground(_: u32) {}
 
+pub(crate) fn foreground_for_checkpoint(pid: u32) {
+    foreground(pid);
+}
+
 #[tauri::command]
 pub fn session_export(
     content: String,
@@ -99,9 +103,17 @@ pub async fn session_watch(
     app: tauri::AppHandle,
     session_ids: Vec<String>,
     native: bool,
+    events: Vec<String>,
     expected_profile: Option<String>,
 ) -> Result<(), UiError> {
-    if session_ids.len() > 20 || session_ids.iter().any(|id| id.is_empty() || id.len() > 256) {
+    let allowed_events = ["approval", "question", "plan-review", "stopped", "error"];
+    if session_ids.len() > 20
+        || session_ids.iter().any(|id| id.is_empty() || id.len() > 256)
+        || events.len() > allowed_events.len()
+        || events
+            .iter()
+            .any(|event| !allowed_events.contains(&event.as_str()))
+    {
         return Err(UiError::new("watch", "最多关注 20 个会话。"));
     }
     let state = app.state::<Desktop>();
@@ -143,6 +155,7 @@ pub async fn session_watch(
     }
     let cancel = CancellationToken::new();
     *state.session_cancel.lock().unwrap() = Some(cancel.clone());
+    let events: std::collections::HashSet<String> = events.into_iter().collect();
     tauri::async_runtime::spawn(async move {
         let mut previous = states(&initial);
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
@@ -187,6 +200,7 @@ pub async fn session_watch(
             for id in &session_ids {
                 if let (Some(old), Some(new)) = (previous.get(id), current.get(id)) {
                     if let Some(mut kind) = transition(old, new) {
+                        let mut event = transition_event(kind);
                         if old["running"] == true && new["running"] == false {
                             let read_end = async {
                                 let _guard = state.gate.lock().await;
@@ -202,8 +216,15 @@ pub async fn session_watch(
                             if let Ok(detail) = detail {
                                 if confirmed_error(old, &detail) {
                                     kind = "会话发生错误，请查看详情";
+                                    event = "error";
                                 }
                             }
+                        }
+                        if !events.contains(event) {
+                            continue;
+                        }
+                        if event == "error" {
+                            kind = "会话发生错误，请查看详情";
                         }
                         let notice = json!({"sessionId":id,"title":new["title"],"kind":kind,"profile":identity.profile});
                         let _ = app.emit("session-notice", &notice);
@@ -220,6 +241,15 @@ pub async fn session_watch(
         }
     });
     Ok(())
+}
+
+fn transition_event(kind: &str) -> &'static str {
+    match kind {
+        "等待审批" => "approval",
+        "等待回答" => "question",
+        "等待计划审阅" => "plan-review",
+        _ => "stopped",
+    }
 }
 
 fn states(snapshot: &Value) -> HashMap<String, Value> {
@@ -465,5 +495,9 @@ mod tests {
             &json!({}),
             &json!({"lastTurn":{"seq":12,"reason":"error"}})
         ));
+        assert_eq!(transition_event("等待审批"), "approval");
+        assert_eq!(transition_event("等待回答"), "question");
+        assert_eq!(transition_event("等待计划审阅"), "plan-review");
+        assert_eq!(transition_event("运行已停止，请查看结果"), "stopped");
     }
 }

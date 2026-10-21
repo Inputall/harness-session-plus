@@ -48,6 +48,11 @@ fn allowed(name: &str) -> bool {
             | "imported-themes.json"
             | "community-themes.json"
             | "saved-appearance.json"
+            | "session-checkpoints.json"
+            | "session-favorites.json"
+            | "session-tags.json"
+            | "prompt-templates.json"
+            | "session-notes.json"
             | "recycle.sqlite3"
     ) || name
         .strip_prefix("community-themes/")
@@ -174,6 +179,31 @@ fn validate(files: &Files, root: &Path) -> Result<()> {
                 let s: SavedTheme = serde_json::from_value(value).map_err(|_| "保存的皮肤无效")?;
                 s.validate()?;
             }
+            "session-checkpoints.json" => {
+                let entries: Vec<crate::checkpoints::Checkpoint> =
+                    serde_json::from_value(value).map_err(|_| "会话检查点文件无效")?;
+                crate::checkpoints::validate(&entries)?;
+            }
+            "session-favorites.json" => {
+                let entries: Vec<crate::favorites::Favorite> =
+                    serde_json::from_value(value).map_err(|_| "会话收藏文件无效")?;
+                crate::favorites::validate(&entries)?;
+            }
+            "session-tags.json" => {
+                let entries: Vec<crate::session_tags::SessionTags> =
+                    serde_json::from_value(value).map_err(|_| "会话标签文件无效")?;
+                crate::session_tags::validate(&entries)?;
+            }
+            "prompt-templates.json" => {
+                let entries: Vec<crate::prompt_templates::PromptTemplate> =
+                    serde_json::from_value(value).map_err(|_| "提示词模板文件无效")?;
+                crate::prompt_templates::validate(&entries)?;
+            }
+            "session-notes.json" => {
+                let entries: Vec<crate::session_notes::SessionNote> =
+                    serde_json::from_value(value).map_err(|_| "会话备注文件无效")?;
+                crate::session_notes::validate(&entries)?;
+            }
             "imported-themes.json" | "community-themes.json" => {
                 let array = value.as_array().ok_or("主题库无效")?;
                 if array.len()
@@ -231,6 +261,11 @@ fn collect(root: &Path, records: bool, private_paths: bool) -> Result<Files> {
         "imported-themes.json",
         "community-themes.json",
         "saved-appearance.json",
+        "session-checkpoints.json",
+        "session-favorites.json",
+        "session-tags.json",
+        "prompt-templates.json",
+        "session-notes.json",
     ] {
         if root.join(name).exists() {
             files.insert(name.into(), read_limited(&root.join(name), LIMIT)?);
@@ -768,6 +803,142 @@ mod tests {
             .unwrap();
         assert_eq!(identity, ("original-profile".into(), "session-1".into()));
         drop(db);
+    }
+    #[test]
+    fn default_archive_round_trips_user_saved_checkpoints() {
+        let source = Temp::new();
+        let target = Temp::new();
+        let checkpoint = crate::checkpoints::Checkpoint {
+            id: "cp-123-0".into(),
+            profile: "profile-a".into(),
+            session_id: "session-a".into(),
+            title: "Task".into(),
+            workspace: "Workspace".into(),
+            cwd: "D:/work".into(),
+            created_at: 123,
+            prompt: "continue task".into(),
+            git: None,
+        };
+        fs::write(
+            source.0.join("session-checkpoints.json"),
+            serde_json::to_vec(&vec![checkpoint.clone()]).unwrap(),
+        )
+        .unwrap();
+        let files = collect(&source.0, false, false).unwrap();
+        assert!(files.contains_key("session-checkpoints.json"));
+        let (_, restored) = unpack(&pack(&files).unwrap(), &target.0).unwrap();
+        let entries: Vec<crate::checkpoints::Checkpoint> =
+            serde_json::from_slice(&restored["session-checkpoints.json"]).unwrap();
+        assert_eq!(entries, vec![checkpoint]);
+        assert!(!restored.contains_key("session.json"));
+        assert!(!restored.contains_key("project-files.zip"));
+    }
+
+    #[test]
+    fn default_archive_round_trips_profile_scoped_favorites() {
+        let source = Temp::new();
+        let target = Temp::new();
+        let favorite = crate::favorites::Favorite {
+            profile: "profile-a".into(),
+            session_id: "session-a".into(),
+            title: "Task".into(),
+            workspace: "Workspace".into(),
+            updated_at: 123,
+        };
+        fs::write(
+            source.0.join("session-favorites.json"),
+            serde_json::to_vec(&vec![favorite.clone()]).unwrap(),
+        )
+        .unwrap();
+        let files = collect(&source.0, false, false).unwrap();
+        assert!(files.contains_key("session-favorites.json"));
+        let (_, restored) = unpack(&pack(&files).unwrap(), &target.0).unwrap();
+        let entries: Vec<crate::favorites::Favorite> =
+            serde_json::from_slice(&restored["session-favorites.json"]).unwrap();
+        assert_eq!(entries, vec![favorite]);
+    }
+
+    #[test]
+    fn default_archive_round_trips_session_tags() {
+        let source = Temp::new();
+        let target = Temp::new();
+        let tags = crate::session_tags::SessionTags {
+            profile: "profile-a".into(),
+            session_id: "session-a".into(),
+            tags: vec!["project".into(), "follow-up".into()],
+        };
+        fs::write(
+            source.0.join("session-tags.json"),
+            serde_json::to_vec(&vec![tags.clone()]).unwrap(),
+        )
+        .unwrap();
+        let files = collect(&source.0, false, false).unwrap();
+        assert!(files.contains_key("session-tags.json"));
+        let (_, restored) = unpack(&pack(&files).unwrap(), &target.0).unwrap();
+        let entries: Vec<crate::session_tags::SessionTags> =
+            serde_json::from_slice(&restored["session-tags.json"]).unwrap();
+        assert_eq!(entries, vec![tags]);
+    }
+    #[test]
+    fn default_archive_round_trips_prompt_templates() {
+        let source = Temp::new();
+        let target = Temp::new();
+        let template = crate::prompt_templates::PromptTemplate {
+            id: "template-1".into(),
+            name: "Review changes".into(),
+            category: "Review".into(),
+            content: "Inspect the diff and run focused tests.".into(),
+            updated_at: 123,
+        };
+        fs::write(
+            source.0.join("prompt-templates.json"),
+            serde_json::to_vec(&vec![template.clone()]).unwrap(),
+        )
+        .unwrap();
+        let files = collect(&source.0, false, false).unwrap();
+        assert!(files.contains_key("prompt-templates.json"));
+        let (_, restored) = unpack(&pack(&files).unwrap(), &target.0).unwrap();
+        let entries: Vec<crate::prompt_templates::PromptTemplate> =
+            serde_json::from_slice(&restored["prompt-templates.json"]).unwrap();
+        assert_eq!(entries, vec![template]);
+    }
+    #[test]
+    fn invalid_prompt_template_backup_is_rejected() {
+        let root = Temp::new();
+        let invalid = crate::prompt_templates::PromptTemplate {
+            id: "invalid id".into(),
+            name: "Template".into(),
+            category: String::new(),
+            content: "Prompt".into(),
+            updated_at: 1,
+        };
+        let files = Files::from([(
+            "prompt-templates.json".into(),
+            serde_json::to_vec(&vec![invalid]).unwrap(),
+        )]);
+        assert!(validate(&files, &root.0).is_err());
+    }
+    #[test]
+    fn default_archive_round_trips_session_notes() {
+        let source = Temp::new();
+        let target = Temp::new();
+        let note = crate::session_notes::SessionNote {
+            profile: "profile-a".into(),
+            session_id: "session-a".into(),
+            content: "Keep the local fixture and avoid changing the API.".into(),
+            updated_at: 123,
+        };
+        fs::write(
+            source.0.join("session-notes.json"),
+            serde_json::to_vec(&vec![note.clone()]).unwrap(),
+        )
+        .unwrap();
+        let files = collect(&source.0, false, false).unwrap();
+        assert!(files.contains_key("session-notes.json"));
+        let (_, restored) = unpack(&pack(&files).unwrap(), &target.0).unwrap();
+        let entries: Vec<crate::session_notes::SessionNote> =
+            serde_json::from_slice(&restored["session-notes.json"]).unwrap();
+        assert_eq!(entries, vec![note]);
     }
     #[test]
     fn restore_keeps_unlisted_records_and_disables_automatic_enhancement() {

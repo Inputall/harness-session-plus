@@ -15,6 +15,7 @@ pub enum Request {
     Search { query: String },
     Detail { session_id: String },
     Open { session_id: String },
+    Jobs { session_id: String },
 }
 impl Request {
     pub fn validate(&self) -> Result<(), String> {
@@ -26,7 +27,7 @@ impl Request {
             {
                 Err("搜索词需要 1–200 个字符，不能包含空字符。".into())
             }
-            Self::Detail { session_id } | Self::Open { session_id }
+            Self::Detail { session_id } | Self::Open { session_id } | Self::Jobs { session_id }
                 if session_id.is_empty() || session_id.len() > 256 || session_id.contains('\0') =>
             {
                 Err("会话 ID 无效。".into())
@@ -83,6 +84,11 @@ mod tests {
         }
         .validate()
         .is_err());
+        assert!(Request::Jobs {
+            session_id: "x".repeat(257)
+        }
+        .validate()
+        .is_err());
         assert!(
             serde_json::from_value::<Request>(json!({"action":"delete","sessionId":"x"})).is_err()
         );
@@ -91,6 +97,12 @@ mod tests {
                 session_id: "unique-id".into()
             })["sessionId"],
             "unique-id"
+        );
+        assert_eq!(
+            json!(Request::Jobs {
+                session_id: "session-a".into()
+            }),
+            json!({"action":"jobs","sessionId":"session-a"})
         );
     }
 }

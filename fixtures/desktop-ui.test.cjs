@@ -10,6 +10,7 @@ function environment(responder) {
   class Element {
     constructor(id='') {this.id=id;this.dataset={};this.children=[];this.events={};this.value='';this.disabled=false;this.hidden=false;this.checked=false;this.textContent='';this.classes=new Set();this.classList={toggle:(name,on)=>{if(on===undefined)on=!this.classes.has(name);on?this.classes.add(name):this.classes.delete(name);}};}
     addEventListener(name,fn){this.events[name]=fn;}
+    focus(){this.focused=true;}click(){return this.events.click?.({preventDefault(){}});}
     setAttribute(){} removeAttribute(){}
     append(...nodes){this.children.push(...nodes);} prepend(node){this.children.unshift(node);}
     replaceChildren(...nodes){this.children=[...nodes];} add(node){this.children.push(node);}
@@ -22,14 +23,15 @@ function environment(responder) {
   const nav = ['overview','sessions','trash','connection','capabilities','skins','settings'].map(page=>{const el=new Element();el.dataset.page=page;return el;});
   const actions=['diagnose','inject_test','remove_injection','probe_capabilities'].map(action=>{const el=new Element();el.dataset.action=action;return el;});
   const navShortcuts=['connection','capabilities'].map(page=>{const el=new Element();el.dataset.nav=page;return el;});
-  const calls=[];const intervals=new Map();let nextTimer=1;
+  const calls=[];const confirmations=[];const intervals=new Map();let nextTimer=1;
   const settings={port:9223,target_id:null,executable:'C:\\Harness.exe',theme:'dark'};
   const document={getElementById:id=>elements[id],createElement:()=>new Element(),documentElement:{dataset:{}},querySelector:()=>null,querySelectorAll:selector=>({'.page':pages,'.nav-item':nav,'[data-page]':nav,'[data-nav]':navShortcuts,'[data-action]':actions}[selector]||[])};
   const invoke=async(command,args)=>{calls.push({command,args});if(command==='load_settings')return settings;if(command==='save_settings')return args.settings;return responder(command,args);};
-  const listeners={};
-  const context=vm.createContext({document,window:{confirm:()=>true,__TAURI__:{core:{invoke},event:{listen:async(name,fn)=>{listeners[name]=fn;}}}},Option:class extends Element {constructor(text,value){super();this.textContent=text;this.value=value;}},setTimeout:()=>nextTimer++,clearTimeout:()=>{},setInterval:fn=>{const id=nextTimer++;intervals.set(id,fn);return id;},clearInterval:id=>intervals.delete(id),Date,console});
+  const listeners={},windowEvents={};
+  const storage=new Map();const localStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,String(value))};
+  const context=vm.createContext({document,window:{confirm:text=>{confirmations.push(text);return true;},addEventListener:(name,fn)=>{windowEvents[name]=fn;},__TAURI__:{core:{invoke},event:{listen:async(name,fn)=>{listeners[name]=fn;}}}},localStorage,Option:class extends Element {constructor(text,value){super();this.textContent=text;this.value=value;}},setTimeout:()=>nextTimer++,clearTimeout:()=>{},setInterval:fn=>{const id=nextTimer++;intervals.set(id,fn);return id;},clearInterval:id=>intervals.delete(id),Date,console});
   vm.runInContext(source,context);
-  return {elements,nav,actions,calls,intervals,context,listeners,fire:async(id,event='click')=>{await elements[id].events[event]({preventDefault(){}});},settle:()=>new Promise(resolve=>setImmediate(resolve))};
+  return {elements,nav,actions,calls,confirmations,intervals,context,listeners,windowEvents,storage,fire:async(id,event='click')=>{await elements[id].events[event]({preventDefault(){}});},settle:()=>new Promise(resolve=>setImmediate(resolve))};
 }
 const diagnostic={browser:'Mock/1',injection:{installed:false,dataOperations:false},pageRecognized:true};
 test('theme UI uses neutral labels without changing stored theme identity',async()=>{
@@ -155,13 +157,228 @@ test('permanent deletion check is read-only and displays backend refusal',async(
 });
 
 const sessionSource=fs.readFileSync(path.join(__dirname,'../desktop/ui/session-center.js'),'utf8');
+test('Ctrl+K opens a searchable session switcher and selects by real session ID',async()=>{
+ const sessions=[{sessionId:'real-a',title:'Alpha task',workspace:'Workspace A',running:false,archived:false},{sessionId:'real-b',title:'Beta task',workspace:'Workspace B',running:false,archived:false}];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:sessions.find(s=>s.sessionId===args.request.sessionId),messages:[],throughSeq:1,projectionState:'sequenced',profile:'p'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs')return {jobs:[]};
+  if(command==='favorite_list')return [];
+  if(command==='session_tags_list')return [{sessionId:'real-a',tags:['focus']}];
+  if(command==='workspace_git_status')return {clean:true,branch:'main',cwd:'D:/workspace',files:[],commits:[]};
+  if(command==='checkpoint_list')return [];
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();await env.settle();
+ let prevented=false;env.windowEvents.keydown({ctrlKey:true,altKey:false,metaKey:false,key:'k',target:{matches:()=>false},preventDefault(){prevented=true;}});await env.settle();await env.settle();
+ assert.equal(prevented,true);assert.equal(env.nav.find(n=>n.dataset.page==='sessions').classes.has('active'),true);assert.equal(env.elements['session-switcher-dialog'].open,true);
+ env.elements['session-switcher-search'].value='focus';await env.fire('session-switcher-search','input');
+ assert.equal(env.elements['session-switcher-results'].children.length,1);assert.equal(env.elements['session-switcher-results'].children[0].children[0].textContent,'Alpha task');
+ env.elements['session-switcher-search'].value='beta';await env.fire('session-switcher-search','input');
+ assert.equal(env.elements['session-switcher-results'].children.length,1);
+ await env.elements['session-switcher-results'].children[0].events.click();await env.settle();
+ assert.equal(env.elements['session-switcher-dialog'].open,false);assert.equal(env.elements['session-detail-title'].textContent,'Beta task');
+ const detail=env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='detail');assert.equal(detail.args.request.sessionId,'real-b');assert.equal(detail.args.expectedProfile,'p');
+});
+test('prompt templates save locally, filter, insert without sending, and delete by template ID',async()=>{
+ const session={sessionId:'session-1',title:'Current task',workspace:'Project',running:false,archived:false};
+ const templates=[];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[session],profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session,messages:[],throughSeq:1,projectionState:'sequenced',profile:'p'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs')return {jobs:[]};
+  if(command==='favorite_list'||command==='session_tags_list'||command==='checkpoint_list')return [];
+  if(command==='prompt_template_list')return templates;
+  if(command==='prompt_template_save'){const saved={...args.template,id:args.template.id||'template-1',updatedAt:123};templates.splice(0,templates.length,saved);return saved;}
+  if(command==='prompt_template_delete'){const i=templates.findIndex(item=>item.id===args.id);if(i>=0)templates.splice(i,1);return null;}
+  if(command==='workspace_git_status')return {clean:true,branch:'main',cwd:'D:/workspace',files:[],commits:[]};
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);env.context.window.sessionCenterOpen();await env.settle();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();await env.settle();await env.settle();
+ await env.fire('session-template-new');env.elements['session-template-name'].value='Review';env.elements['session-template-category'].value='Quality';env.elements['session-template-content'].value='Inspect the diff and run focused tests.';
+ let prevented=false;await env.elements['session-template-form'].events.submit({preventDefault(){prevented=true;}});await env.settle();
+ assert.equal(prevented,true);assert.equal(env.elements['session-template-dialog'].open,false);assert.equal(templates.length,1);
+ env.elements['session-template-search'].value='quality';await env.fire('session-template-search','input');
+ const row=env.elements['session-templates'].children[0];assert.equal(row.children[0].children[0].textContent,'Review');
+ await row.children[1].children[0].events.click();
+ assert.equal(env.elements['session-next-task'].value,'Inspect the diff and run focused tests.');assert.match(env.elements['session-prompt'].value,/本次请求：Inspect the diff and run focused tests\./);
+ assert.equal(env.calls.some(c=>c.command==='session_query'&&c.args.request.action==='send'),false);
+ await row.children[1].children[2].events.click();await env.settle();assert.equal(templates.length,0);
+ assert.ok(env.calls.some(c=>c.command==='prompt_template_delete'&&c.args.id==='template-1'));
+});
+test('session notes load by profile and real ID, update the continuation prompt, and save locally',async()=>{
+ const session={sessionId:'real-session-id',title:'Implementation',workspace:'Project',running:false,archived:false};
+ let saved=null;
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[session],profile:'profile-a'};
+  if(command==='session_query'&&args.request.action==='detail')return {session,messages:[],throughSeq:4,projectionState:'sequenced',profile:'profile-a'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs')return {jobs:[]};
+  if(command==='favorite_list'||command==='session_tags_list'||command==='checkpoint_list'||command==='prompt_template_list')return [];
+  if(command==='session_notes_list')return [{profile:'profile-a',sessionId:'real-session-id',content:'Keep compatibility with the existing file format.',updatedAt:1}];
+  if(command==='session_notes_save'){saved=args.note;return null;}
+  if(command==='workspace_git_status')return {clean:true,branch:'main',cwd:'D:/workspace',files:[],commits:[]};
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);env.context.window.sessionCenterOpen();await env.settle();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();await env.settle();
+ assert.equal(env.elements['session-note'].value,'Keep compatibility with the existing file format.');
+ assert.match(env.elements['session-prompt'].value,/本机备注（用户记录/);assert.match(env.elements['session-prompt'].value,/Keep compatibility with the existing file format\./);
+ env.elements['session-note'].value='Preserve the public JSON shape.';await env.fire('session-note','input');
+ assert.match(env.elements['session-prompt'].value,/Preserve the public JSON shape\./);
+ await env.fire('session-note-save');
+ assert.equal(saved.profile,'profile-a');assert.equal(saved.sessionId,'real-session-id');assert.equal(saved.content,'Preserve the public JSON shape.');
+});
+test('late session-note loading does not overwrite an in-progress edit',async()=>{
+ const session={sessionId:'session-1',title:'Current',workspace:'Project',running:false,archived:false};let resolveNotes;
+ const pendingNotes=new Promise(resolve=>{resolveNotes=resolve;});
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[session],profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session,messages:[],throughSeq:1,projectionState:'sequenced',profile:'p'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[]};
+  if(command==='session_query'&&args.request.action==='jobs')return {jobs:[]};
+  if(command==='session_notes_list')return pendingNotes;
+  if(command==='favorite_list'||command==='session_tags_list'||command==='checkpoint_list'||command==='prompt_template_list')return [];
+  if(command==='workspace_git_status')return {clean:true,branch:'main',cwd:'D:/workspace',files:[],commits:[]};
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);env.context.window.sessionCenterOpen();await env.settle();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();
+ env.elements['session-note'].value='Unsaved draft';await env.fire('session-note','input');
+ resolveNotes([{profile:'p',sessionId:'session-1',content:'Older saved note',updatedAt:1}]);await env.settle();await env.settle();
+ assert.equal(env.elements['session-note'].value,'Unsaved draft');assert.match(env.elements['session-prompt'].value,/Unsaved draft/);
+});
+test('session favorites are profile-scoped, filter by identity, and stay local',async()=>{
+ const first={sessionId:'a',title:'Pinned task',workspace:'ws',running:false,archived:false};
+ const second={sessionId:'b',title:'Other task',workspace:'ws',running:false,archived:false};
+ let favorite=[];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[first,second],profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:args.request.sessionId==='a'?first:second,messages:[],throughSeq:1,profile:'p',projectionState:'sequenced',stats:{}};
+  if(command==='favorite_list'){assert.equal(args.profile,'p');return favorite;}
+  if(command==='favorite_toggle'){assert.equal(args.favorite.profile,'p');favorite=favorite.length?[]:[args.favorite];return !favorite.length?false:true;}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();assert.equal(env.elements['session-favorite-toggle'].textContent,'收藏会话');
+ await env.fire('session-favorite-toggle');await env.settle();assert.equal(env.elements['session-favorite-toggle'].textContent,'取消收藏');
+ env.elements['session-filter'].value='favorite';env.elements['session-filter'].events.change();assert.equal(env.elements['session-results'].children.length,1);assert.equal(env.elements['session-results'].children[0].dataset.sessionId,'a');
+ await env.elements['session-results'].children[0].events.click();await env.settle();await env.fire('session-favorite-toggle');await env.settle();assert.equal(env.elements['session-favorite-toggle'].textContent,'收藏会话');
+ assert(env.calls.every(c=>!['delete_sessions','archive_session','restore_session'].includes(c.command)));
+});
+test('session tags save locally, search by tag and clear without mutating sessions',async()=>{
+ const first={sessionId:'a',title:'Task alpha',workspace:'ws',running:false,archived:false};
+ const second={sessionId:'b',title:'Task beta',workspace:'ws',running:false,archived:false};
+ let tags=[];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[first,second],profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:args.request.sessionId==='a'?first:second,messages:[],throughSeq:1,profile:'p',projectionState:'sequenced',stats:{}};
+  if(command==='session_tags_list')return tags;
+  if(command==='session_tags_save'){assert.equal(args.item.profile,'p');tags=tags.filter(item=>item.sessionId!==args.item.sessionId);if(args.item.tags.length)tags.push(args.item);return null;}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();
+ env.elements['session-tags-input'].value='release, follow-up';await env.fire('session-tags-save');
+ assert.deepEqual(Array.from(tags[0].tags),['release','follow-up']);const text=node=>[node.textContent,...node.children.map(text)].join(' ');assert.match(text(env.elements['session-results'].children[0]),/release/);
+ env.elements['session-search'].value='follow-up';await env.fire('session-search','input');assert.equal(env.elements['session-results'].children.length,1);
+ env.elements['session-tags-input'].value='release, release';await env.fire('session-tags-save');assert.deepEqual(Array.from(tags[0].tags),['release']);
+ env.elements['session-tags-input'].value='';await env.fire('session-tags-save');assert.equal(tags.length,0);
+ assert(env.calls.every(c=>!['delete_sessions','archive_session','restore_session'].includes(c.command)));
+});
+test('batch organizer applies favorites and additive tags per session without entering compare mode',async()=>{
+ const sessions=['a','b'].map((id,i)=>({sessionId:id,title:`Task ${id}`,workspace:'ws',running:false,archived:false}));
+ let favorites=[],tags=[];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:sessions.find(s=>s.sessionId===args.request.sessionId),messages:[],throughSeq:1,profile:'p'};
+  if(command==='favorite_list')return favorites;
+  if(command==='favorite_toggle'){const id=args.favorite.sessionId;favorites=favorites.some(x=>x.sessionId===id)?favorites.filter(x=>x.sessionId!==id):[...favorites,args.favorite];return favorites.some(x=>x.sessionId===id);}
+  if(command==='session_tags_list')return tags;
+  if(command==='session_tags_save'){tags=tags.filter(x=>x.sessionId!==args.item.sessionId);if(args.item.tags.length)tags.push(args.item);return null;}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();await env.settle();
+ await env.fire('session-batch-mode');
+ const rows=()=>env.elements['session-results'].children.filter(x=>x.dataset.sessionId);
+ await rows()[0].events.click();await rows()[1].events.click();assert.equal(env.elements['session-batch-count'].textContent,'已选择 2 个会话');
+ await env.fire('session-batch-favorite');assert.equal(favorites.length,2);
+ env.elements['session-batch-tags'].value='release, urgent';await env.fire('session-batch-tag-save');assert.equal(tags.length,2);assert.deepEqual(Array.from(tags[0].tags),['release','urgent']);
+ assert.equal(env.elements['session-compare-run'].disabled,true);assert.equal(env.elements['session-batch-actions'].hidden,false);
+ await env.fire('session-batch-unfavorite');assert.equal(favorites.length,0);
+ await env.fire('session-batch-mode');assert.equal(env.elements['session-batch-actions'].hidden,true);
+ assert(env.calls.every(c=>!['delete_sessions','archive_session','restore_session'].includes(c.command)));
+});
+test('batch tag limit failure leaves existing tags intact and continues other sessions',async()=>{
+ const sessions=['a','b'].map(id=>({sessionId:id,title:`Task ${id}`,workspace:'ws',running:false,archived:false}));
+ let tags=[{profile:'p',sessionId:'b',tags:Array.from({length:8},(_,i)=>`tag${i}`)}];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:sessions.find(s=>s.sessionId===args.request.sessionId),messages:[],throughSeq:1,profile:'p'};
+  if(command==='favorite_list')return [];
+  if(command==='session_tags_list')return tags;
+  if(command==='session_tags_save'){tags=tags.filter(x=>x.sessionId!==args.item.sessionId);if(args.item.tags.length)tags.push(args.item);return null;}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();await env.settle();
+ await env.fire('session-batch-mode');const rows=()=>env.elements['session-results'].children.filter(x=>x.dataset.sessionId);await rows()[0].events.click();await rows()[1].events.click();
+ env.elements['session-batch-tags'].value='urgent';await env.fire('session-batch-tag-save');
+ assert.deepEqual(Array.from(tags.find(x=>x.sessionId==='a').tags),['urgent']);assert.deepEqual(Array.from(tags.find(x=>x.sessionId==='b').tags),Array.from({length:8},(_,i)=>`tag${i}`));
+ assert.match(env.elements['session-notification-feedback'].textContent,/Task b/);
+});
+test('batch context export writes one bounded markdown file and skips unsequenced sessions',async()=>{
+ const sessions=['a','b'].map(id=>({sessionId:id,title:`Task ${id}`,workspace:'ws',running:false,archived:false}));let exported;
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return args.request.sessionId==='a'?{session:sessions[0],messages:[{seq:4,role:'user',text:'verified question'},{seq:5,role:'tool',text:'hidden tool'}],throughSeq:5,hasMore:true,projectionState:'sequenced',profile:'p'}:{session:sessions[1],messages:[{seq:2,role:'assistant',text:'unverified'}],projectionState:'unavailable',profile:'p'};
+  if(command==='session_export'){exported=args.content;return 'D:/exports/batch.md';}
+  if(command==='favorite_list')return [];
+  if(command==='session_tags_list')return [];
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();await env.settle();await env.fire('session-batch-mode');
+ const rows=()=>env.elements['session-results'].children.filter(x=>x.dataset.sessionId);await rows()[0].events.click();await rows()[1].events.click();await env.fire('session-batch-export');
+ assert.match(exported,/Task a/);assert.match(exported,/verified question/);assert.match(exported,/截止事件：5/);assert.doesNotMatch(exported,/hidden tool|unverified/);
+ assert.equal(env.calls.filter(c=>c.command==='session_export').length,1);assert.equal(env.calls.filter(c=>c.command==='session_query'&&c.args.request.action==='detail').length,2);
+});
+test('session comparison is profile-bound, read-only and limited to two sessions',async()=>{
+ const sessions=['a','b','c'].map((id,i)=>({sessionId:id,title:`Task ${id}`,workspace:'ws',running:false,archived:false}));
+ const detailCalls=[];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions,profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail'){
+   detailCalls.push(args.request.sessionId);const session=sessions.find(s=>s.sessionId===args.request.sessionId);
+   return {session,messages:[],throughSeq:1,profile:'p',projectionState:'sequenced',stats:{modelSelection:{lastUsed:{provider:'local',model:`model-${session.sessionId}`}},permissionPreset:'workspace-write',planMode:{active:false,pending:false},tokenUsage:{uncachedInputTokens:100,outputTokens:20}}};
+  }
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();
+ assert.equal(env.elements['session-detail-title'].textContent,'Task a');
+ await env.fire('session-compare-mode');
+ const rows=()=>env.elements['session-results'].children.filter(n=>n.dataset.sessionId);
+ await rows()[0].events.click();await rows()[1].events.click();assert.equal(env.elements['session-compare-run'].disabled,false);
+ await rows()[2].events.click();assert.equal(env.elements['session-compare-run'].disabled,false);
+ detailCalls.length=0;await env.fire('session-compare-run');
+ assert.deepEqual(detailCalls,['a','b']);assert.equal(env.elements['session-compare-panel'].hidden,false);
+ const usageText=n=>[n.textContent,...n.children.map(usageText)].join(' ');
+ assert.match(usageText(env.elements['session-compare-results']),/model-a/);assert.match(usageText(env.elements['session-compare-results']),/model-b/);
+ assert.match(usageText(env.elements['session-compare-results']),/100/);
+ assert(env.calls.filter(c=>c.command==='session_query'&&c.args.request.action==='detail').every(c=>c.args.expectedProfile==='p'));
+ assert(env.calls.every(c=>!['delete_sessions','archive_session','restore_session'].includes(c.command)));
+});
 test('session center searches body, copies bounded context, exports and navigates by ID',async()=>{
  const s={sessionId:'a',title:'Codex++ <img onerror=x>',workspace:'ws',cwd:'D:/work',running:false,archived:false};
  const env=environment((command,args)=>{
   if(command==='session_query'){
    if(args.request.action==='list')return {sessions:[s],profile:'profile-a'};
    if(args.request.action==='search')return {sessions:[s],profile:'profile-a',hits:[{sessionId:'a',snippet:'needle in body'}],searchMode:'recent',scanned:1,hasMore:true};
-   if(args.request.action==='detail')return {session:s,messages:[{seq:1,role:'user',text:'needle in body'}],throughSeq:1,hasMore:true,profile:'profile-a'};
+   if(args.request.action==='detail')return {session:s,messages:[{seq:1,role:'user',text:'needle in body'}],throughSeq:1,hasMore:true,profile:'profile-a',projectionState:'sequenced',stats:{permissionPreset:'workspace-write',planMode:{active:true,pending:false},tokenUsage:{uncachedInputTokens:125,outputTokens:30},contextPressure:{pressureTokens:160},modelSelection:{lastUsed:{provider:'provider-x',model:'model-y'},next:null}}};
+   if(args.request.action==='skills')return {skills:[{name:'review',description:'Read-only review',whenToUse:'Before changes',modelInvocable:true}]};
+   if(args.request.action==='jobs')return {jobs:[{id:'job-1',kind:'shell',command:'npm test',status:'running',progress:'running tests',detail:'',retainedBytes:42}]};
    if(args.request.action==='open')return {opened:true};
   }
   if(command==='session_export')return 'D:/export.md';
@@ -173,15 +390,84 @@ test('session center searches body, copies bounded context, exports and navigate
  assert.equal(env.elements['session-results'].children[0].children[0].textContent,'编程助手 <img onerror=x>');
  env.elements['session-search'].value='needle';await env.fire('session-search-form','submit');
  assert.match(env.elements['session-count'].textContent,/索引关闭/);
- await env.elements['session-results'].children[0].events.click();
+ await env.elements['session-results'].children[0].events.click();await env.settle();
+ await env.settle();
  assert.equal(env.elements['session-detail-title'].textContent,'编程助手 <img onerror=x>');
+ const usageText=n=>[n.textContent,...n.children.map(usageText)].join(' ');assert.match(usageText(env.elements['session-usage']),/workspace-write/);assert.match(usageText(env.elements['session-usage']),/计划模式/);assert.match(usageText(env.elements['session-usage']),/125/);assert.match(usageText(env.elements['session-usage']),/Read-only review/);
+ assert.match(usageText(env.elements['session-jobs']),/npm test/);assert.match(usageText(env.elements['session-jobs']),/运行中/);assert.equal(env.elements['session-jobs-refresh'].disabled,false);
+ assert.equal(env.elements['session-plan-command'].disabled,false);await env.fire('session-plan-command');assert.equal(copied,'/plan off');
  env.elements['session-next-task'].value='继续检查';await env.fire('session-next-task','input');await env.fire('session-copy');
  assert.match(copied,/needle in body/);assert.match(copied,/历史对话引用/);assert.match(copied,/继续检查/);
  assert(copied.includes(s.title),'Exported context must preserve the original session title');
  await env.fire('session-export');await env.fire('session-open');
  assert.equal(env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='open').args.request.sessionId,'a');
  assert.equal(env.calls.find(c=>c.command==='session_query'&&c.args.request.action==='open').args.expectedProfile,'profile-a');
- await env.fire('session-watch-add');assert.match(env.elements['session-watch-status'].textContent,/1/);await env.fire('session-watch-stop');assert.equal(env.elements['session-watch-status'].textContent,'已停止');
+ await env.fire('session-watch-add');assert.match(env.elements['session-watch-status'].textContent,/1/);
+ const watchCall=env.calls.filter(c=>c.command==='session_watch').at(-1);assert.deepEqual(Array.from(watchCall.args.events),['approval','question','plan-review','stopped','error']);
+ env.elements['session-watch-error'].checked=false;await env.fire('session-watch-error','change');await env.settle();
+ assert.deepEqual(JSON.parse(env.storage.get('hsp-session-watch-rules')).events,['approval','question','plan-review','stopped']);
+ assert.deepEqual(Array.from(env.calls.filter(c=>c.command==='session_watch').at(-1).args.events),['approval','question','plan-review','stopped']);
+ await env.fire('session-watch-stop');assert.equal(env.elements['session-watch-status'].textContent,'已停止');
+});
+test('session checkpoints persist locally, require the saved profile, and restore through the exact session ID',async()=>{
+ const session={sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',running:false,archived:false};
+ const saved={id:'cp-1-0',profile:'profile-a',sessionId:'real-id-1',title:'Task',workspace:'Workspace',cwd:'D:/work',createdAt:1,prompt:'continue this verified task',git:{branch:'main',clean:false,changedFiles:2}};
+ let checkpoints=[];
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[session],profile:'profile-a'};
+  if(command==='session_query'&&args.request.action==='detail')return {session,messages:[{seq:2,role:'assistant',text:'last verified result'}],throughSeq:2,profile:'profile-a'};
+  if(command==='checkpoint_list')return checkpoints;
+  if(command==='checkpoint_create'){assert.equal(args.input.sessionId,'real-id-1');assert.equal(args.input.profile,'profile-a');checkpoints=[saved];return saved;}
+  if(command==='checkpoint_restore'){assert.equal(args.id,'cp-1-0');return saved;}
+  if(command==='workspace_git_status')return {branch:'feature/newer',clean:true,files:[]};
+  if(command==='checkpoint_delete'){checkpoints=[];return null;}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();
+ env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+  await env.elements['session-results'].children[0].events.click();await env.settle();
+  await env.fire('session-checkpoint-save');
+ assert.equal(env.calls.find(c=>c.command==='checkpoint_create').args.input.profile,'profile-a');
+ assert.equal(env.elements['session-checkpoints'].children.length,1);
+ const actions=env.elements['session-checkpoints'].children[0].children[1].children;
+ assert.equal(actions[0].disabled,false);await actions[0].events.click();
+ assert.match(env.confirmations[0],/Git 状态与当前工作区不同/);
+ assert.equal(env.elements['session-prompt'].value,'continue this verified task');
+ assert.match(env.elements['session-detail-meta'].textContent,/已核对当前 Harness profile/);
+ assert.match(env.elements['session-detail-meta'].textContent,/保存时 Git main · 2 项改动/);
+ assert.equal(env.elements['session-copy'].disabled,false);
+ const stale={...saved,profile:'other-profile'};checkpoints=[stale];
+ env.nav.find(n=>n.dataset.page==='overview').events.click();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ assert.equal(env.elements['session-checkpoints'].children[0].children[1].children[0].disabled,true);
+});
+test('Git workspace panel is read-only and ignores stale results after switching sessions',async()=>{
+ const first={sessionId:'a',title:'A',workspace:'w',cwd:'D:/repo-a',running:false,archived:false};
+ const second={sessionId:'b',title:'B',workspace:'w',cwd:'D:/repo-b',running:false,archived:false};
+ const env=environment((command,args)=>{
+  if(command==='session_query'&&args.request.action==='list')return {sessions:[first,second],profile:'p'};
+  if(command==='session_query'&&args.request.action==='detail')return {session:args.request.sessionId==='a'?first:second,messages:[],throughSeq:1,profile:'p'};
+  if(command==='session_query'&&args.request.action==='skills')return {skills:[{name:'review',description:'Review changes',whenToUse:'Before merge',modelInvocable:true}]};
+  if(command==='workspace_git_status'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {cwd:'D:/repo-a',branch:'main',clean:false,files:[{status:'工作区修改',path:'src/main.rs'}],commits:['abc123\t2026-10-19\tread-only']};}
+  if(command==='workspace_git_diff'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {staged:'diff --cached staged marker',stagedTruncated:false,unstaged:'diff -- unstaged marker',unstagedTruncated:false};}
+  if(command==='workspace_rules'){assert.equal(args.sessionId,'a');assert.equal(args.expectedProfile,'p');return {files:[{path:'AGENTS.md',bytes:23,truncated:false,content:'Rule text <script> inert'}]};}
+  throw Error(command);
+ });
+ vm.runInContext(sessionSource,env.context);await env.settle();env.nav.find(n=>n.dataset.page==='sessions').events.click();await env.settle();
+ await env.elements['session-results'].children[0].events.click();await env.settle();await env.settle();
+ assert.match(env.elements['session-git-summary'].textContent,/D:\/repo-a/);assert.match(env.elements['session-git-files'].children[0].children[1].textContent,/src\/main\.rs/);
+ assert(env.elements['session-usage'].children.some(child=>child.textContent.includes('工具与技能清单（已验证）')));
+ assert(env.elements['session-usage'].children.some(child=>child.textContent.includes('MCP 服务清单接口尚未验证')));
+ assert.equal(env.calls.filter(c=>c.command==='workspace_git_status').length,1);
+ await env.elements['session-git-diff'].events.click();await env.settle();
+ assert.match(env.elements['session-git-diff-staged'].textContent,/staged marker/);
+ assert.match(env.elements['session-git-diff-unstaged'].textContent,/unstaged marker/);
+ assert.equal(env.calls.filter(c=>c.command==='workspace_git_diff').length,1);
+ await env.elements['session-rules-read'].events.click();await env.settle();
+ assert.equal(env.elements['session-rules-files'].children.length,1);
+ assert.equal(env.elements['session-rules-files'].children[0].children[1].textContent,'Rule text <script> inert');
+ assert.equal(env.calls.filter(c=>c.command==='workspace_rules').length,1);
+ assert(env.calls.every(c=>!['git_commit','git_reset','git_checkout','git_add'].includes(c.command)));
+ await env.elements['session-git-refresh'].events.click();assert.equal(env.calls.filter(c=>c.command==='workspace_git_status').length,2);
 });
 test('late detail and changed search terms cannot expose stale selection or stale hits',async()=>{
  let detailResolve;

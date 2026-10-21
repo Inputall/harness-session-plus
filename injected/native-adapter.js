@@ -26,6 +26,21 @@
       ws.onerror=()=>finish(Error('Native stream disconnected'));
     });
   };
+  const streamFirst = async (endpoint, args, expectedOrigin) => {
+    const boot=await window.dshDesktopBoot.ready();
+    if(expectedOrigin&&boot.streamBaseUrl!==expectedOrigin)throw Error('Host generation changed');
+    const origin=new URL(boot.streamBaseUrl);
+    if(origin.protocol!=='http:'||origin.hostname!=='127.0.0.1'||origin.username||origin.password)throw Error('Host origin mismatch');
+    return new Promise((resolve,reject)=>{
+      const ws=new WebSocket(`ws://${origin.host}/api/remote.mux`),streamId=crypto.randomUUID();let settled=false;
+      const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);if(ws.readyState===1)ws.send(JSON.stringify({type:'cancel',streamId}));ws.close();error?reject(error):resolve(value);};
+      const timer=setTimeout(()=>finish(Error('Native stream timeout')),7000);
+      ws.onopen=()=>ws.send(JSON.stringify({type:'open',streamId,endpoint,payload:{args}}));
+      ws.onmessage=e=>{try{const v=JSON.parse(e.data);if(v.streamId!==streamId)return;if(v.type==='error')finish(Error(v.error?.code||'Native stream refused'));else if(v.type==='item'&&v.value?.type==='rows'&&Array.isArray(v.value.jobs))finish(null,v.value.jobs);}catch{finish(Error('Invalid native stream'));}};
+      ws.onerror=()=>finish(Error('Native stream disconnected'));
+      ws.onclose=()=>{if(!settled)finish(Error('Native stream closed before its roster'));};
+    }).then(async value=>{if(expectedOrigin&&(await window.dshDesktopBoot.ready()).streamBaseUrl!==expectedOrigin)throw Error('Host generation changed');return value;});
+  };
   const snapshot=async()=>{
     const hostOrigin=(await window.dshDesktopBoot.ready()).streamBaseUrl;
     const [workspaces,sessions]=await Promise.all([baseline(),rpc('session/list',{_request:{}})]);
@@ -33,5 +48,5 @@
     if(!Array.isArray(workspaces.items)||!Array.isArray(workspaces.archivedSessionIds)||!Array.isArray(sessions.items))throw Error('Unsupported list');
     return {hostOrigin,workspaces, sessions:sessions.items.map(s=>({sessionId:s.sessionId,title:s.projections?.values?.title??'',cwd:s.cwd,running:s.running,blank:s.blank,updatedAt:s.updatedAt,origin:s.origin,cursor:s.projections?.kind==='sequenced'?s.projections.asOfSeq:null}))};
   };
-  return {snapshot,baseline,rpc};
+  return {snapshot,baseline,rpc,streamFirst};
 })()

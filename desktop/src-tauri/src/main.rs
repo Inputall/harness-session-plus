@@ -1,7 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod backup;
+mod checkpoints;
+mod favorites;
+mod prompt_templates;
 mod session_center;
+mod session_notes;
+mod session_tags;
 mod theme_keeper;
+mod workspace;
 
 use hsp_core::{
     cdp::Error,
@@ -77,6 +83,11 @@ struct Desktop {
     skin_owner: Mutex<Option<Options>>,
     recycle_cancel: Mutex<Option<CancellationToken>>,
     session_cancel: Mutex<Option<CancellationToken>>,
+    checkpoint_lock: Mutex<()>,
+    favorites_lock: Mutex<()>,
+    session_tags_lock: Mutex<()>,
+    session_notes_lock: Mutex<()>,
+    prompt_templates_lock: Mutex<()>,
     #[cfg(windows)]
     session_toasts: Mutex<Vec<windows::UI::Notifications::ToastNotification>>,
     root: PathBuf,
@@ -898,6 +909,11 @@ fn main() {
                 skin_owner: Mutex::new(None),
                 recycle_cancel: Mutex::new(None),
                 session_cancel: Mutex::new(None),
+                checkpoint_lock: Mutex::new(()),
+                favorites_lock: Mutex::new(()),
+                session_tags_lock: Mutex::new(()),
+                session_notes_lock: Mutex::new(()),
+                prompt_templates_lock: Mutex::new(()),
                 #[cfg(windows)]
                 session_toasts: Mutex::new(Vec::new()),
                 root,
@@ -955,6 +971,22 @@ fn main() {
             session_center::session_watch,
             session_center::session_export,
             session_center::session_notification_test,
+            checkpoints::checkpoint_list,
+            checkpoints::checkpoint_create,
+            checkpoints::checkpoint_restore,
+            checkpoints::checkpoint_delete,
+            favorites::favorite_list,
+            favorites::favorite_toggle,
+            session_tags::session_tags_list,
+            session_tags::session_tags_save,
+            prompt_templates::prompt_template_list,
+            prompt_templates::prompt_template_save,
+            prompt_templates::prompt_template_delete,
+            session_notes::session_notes_list,
+            session_notes::session_notes_save,
+            workspace::workspace_git_status,
+            workspace::workspace_git_diff,
+            workspace::workspace_rules,
             install_recycle,
             recycle_restore_preference,
             refresh_trash,
